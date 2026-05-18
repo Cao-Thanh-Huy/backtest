@@ -1,0 +1,156 @@
+"""Celery pipeline task: Feature Factory — Engine A only (indicators + lags).
+
+NOTE: Target generation is now handled by labeled_dataset_tasks.py (Labeling System page).
+This task ONLY generates features. No targets are appended here.
+"""
+import gc
+import io
+import os
+import tempfile
+
+import polars as pl
+from celery import Task
+
+from workers.celery_app import celery_app
+from workers.engines.features import generate_features
+from app.core.storage import download_bytes, upload_file, parse_s3_uri
+from app.core.config import settings
+
+
+def _update_pipeline_state(pipeline_id: str, **kwargs):
+    """Synchronous DB update from within Celery (uses sync SQLAlchemy)."""
+    from sqlalchemy import create_engine as _ce, text
+    import json
+
+    sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
+    engine = _ce(sync_url)
+    set_clauses = ", ".join(f"{k} = :{k}" for k in kwargs)
+    with engine.begin() as conn:
+        params = {
+            k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
+            for k, v in kwargs.items()
+        }
+        params["pipeline_id"] = pipeline_id
+        conn.execute(
+            text(f"UPDATE feature_pipelines SET {set_clauses}, updated_at = now() WHERE id = :pipeline_id"),
+            params,
+        )
+    engine.dispose()
+
+
+@celery_app.task(
+    bind=True,
+    name="workers.tasks.pipeline_tasks.generate_pipeline_task",
+    max_retries=2,
+    default_retry_delay=30,
+)
+def generate_pipeline_task(self: Task, pipeline_id: str):
+    """
+    Feature Factory pipeline task:
+    1. Load raw data from MinIO (Dataset.s3_raw_path)
+    2. Engine A: Generate indicators + lags
+    3. Save processed Parquet to MinIO (pipelines/{id}/processed.parquet)
+    4. Update DB record
+
+    NOTE: No targets are generated here. Targets are handled by the Labeling System.
+    """
+    try:
+        # --- 1. Load pipeline config from DB ---
+        self.update_state(state="PROGRESS", meta={"progress": 5, "message": "Loading pipeline config..."})
+        from sqlalchemy import create_engine as _ce, text
+        import json as _json
+
+        sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
+        engine = _ce(sync_url)
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT fp.indicators_config, fp.lags, d.s3_raw_path
+                    FROM feature_pipelines fp
+                    JOIN datasets d ON d.id = fp.dataset_id
+                    WHERE fp.id = :pid
+                """),
+                {"pid": pipeline_id},
+            ).fetchone()
+        engine.dispose()
+
+        if row is None:
+            raise ValueError(f"Pipeline {pipeline_id} not found in DB")
+
+        indicators = row[0] if isinstance(row[0], list) else _json.loads(row[0])
+        lags = row[1] if isinstance(row[1], list) else _json.loads(row[1])
+        s3_raw_path: str = row[2]
+
+        _update_pipeline_state(pipeline_id, status="running")
+
+        # --- 2. Download raw Parquet from MinIO ---
+        self.update_state(state="PROGRESS", meta={"progress": 15, "message": "Downloading raw data..."})
+        bucket, key = parse_s3_uri(s3_raw_path)
+        raw_bytes = download_bytes(bucket, key)
+        df_raw = pl.read_parquet(io.BytesIO(raw_bytes))
+
+        # --- 3. Engine A: Feature generation (indicators + lags) ---
+        self.update_state(state="PROGRESS", meta={
+            "progress": 30,
+            "message": "Generating indicators & lag features...",
+            "step": "STEP 2/3 Generating Features",
+            "sub": {"indicator": "", "done": 0, "total": len(indicators)},
+        })
+
+        def _feature_progress(pct: int, msg: str, sub: dict):
+            self.update_state(state="PROGRESS", meta={
+                "progress": 30 + int(pct * 0.50),
+                "message": msg,
+                "step": "STEP 2/3 Generating Features",
+                "sub": sub,
+            })
+
+        df_pd, feature_cols = generate_features(df_raw, indicators, lags, progress_cb=_feature_progress)
+
+        # --- 4. Save processed Parquet to MinIO ---
+        self.update_state(state="PROGRESS", meta={
+            "progress": 82,
+            "message": "Saving processed dataset to MinIO...",
+            "step": "STEP 3/3 Saving to Storage",
+        })
+
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".parquet")
+        os.close(tmp_fd)
+        try:
+            df_out = pl.from_pandas(df_pd)
+            df_out.write_parquet(tmp_path)
+            del df_out, df_pd
+            gc.collect()
+
+            processed_key = f"pipelines/{pipeline_id}/processed.parquet"
+            with open(tmp_path, "rb") as fh:
+                s3_processed_path = upload_file(
+                    settings.minio_bucket_processed,
+                    processed_key,
+                    fh,
+                    "application/octet-stream",
+                )
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+        # --- 5. Update DB ---
+        self.update_state(state="PROGRESS", meta={"progress": 95, "message": "Updating database..."})
+        _update_pipeline_state(
+            pipeline_id,
+            status="completed",
+            s3_processed_path=s3_processed_path,
+            feature_columns=feature_cols,
+        )
+
+        return {
+            "pipeline_id": pipeline_id,
+            "features": len(feature_cols),
+            "s3_path": s3_processed_path,
+        }
+
+    except Exception as exc:
+        _update_pipeline_state(pipeline_id, status="failed", error_message=str(exc))
+        if isinstance(exc, (ValueError, TypeError)):
+            raise
+        raise self.retry(exc=exc)

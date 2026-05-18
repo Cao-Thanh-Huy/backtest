@@ -1,0 +1,62 @@
+# =============================================================================
+# Backend Python Dependencies (FOSS-only, flexible versions for compatibility)
+# =============================================================================
+
+# --- Web Framework ---
+fastapi
+uvicorn[standard]
+python-multipart
+websockets
+
+# --- Database ---
+sqlalchemy[asyncio]
+asyncpg
+alembic
+psycopg2-binary
+
+# --- Task Queue ---
+celery[redis]
+flower
+
+# --- MinIO / S3 ---
+boto3>=1.28.0
+botocore>=1.31.0
+
+# --- Data Processing ---
+polars>=0.20.0
+pandas
+numpy
+pyarrow>=14.0.0
+duckdb>=0.9.0
+
+# --- Market Data ---
+ccxt>=4.2.0
+yfinance>=0.2.36
+
+# --- Technical Indicators ---
+# (Built-in implementations using numpy/pandas)
+
+# --- ML Libraries ---
+scikit-learn
+lightgbm
+numba
+shap
+
+# --- MLflow ---
+mlflow
+
+# --- Feature Selection ---
+statsmodels
+
+# --- Serialization / Validation ---
+pydantic
+pydantic-settings
+orjson
+
+# --- Utilities ---
+python-dotenv
+httpx
+structlog
+tenacity
+watchfiles
+certifi

@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100;0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ─── Base ─────────────────────────────────────────────────── */
+@layer base {
+  ::-webkit-scrollbar              { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track        { background: transparent; }
+  ::-webkit-scrollbar-thumb        { background: rgba(255,255,255,0.10); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover  { background: rgba(255,255,255,0.20); }
+
+  body {
+    @apply bg-surface text-zinc-100 font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  h1, h2, h3, h4 {
+    letter-spacing: -0.025em;
+    font-weight: 600;
+  }
+}
+
+/* ─── Components ────────────────────────────────────────────── */
+@layer components {
+
+  /* ── Cards ── */
+  .card {
+    background: linear-gradient(135deg, #131e30 0%, #0e1724 100%);
+    @apply border border-white/[0.07] rounded-[14px] p-5 shadow-card;
+  }
+  .card-elevated {
+    background: linear-gradient(135deg, #1a2438 0%, #111928 100%);
+    @apply border border-white/[0.09] rounded-[14px] shadow-elevated;
+  }
+  /* Stat card — larger number display */
+  .stat-card {
+    background: linear-gradient(145deg, #131e30 0%, #0e1724 100%);
+    @apply border border-white/[0.07] rounded-[14px] p-5 shadow-card;
+  }
+  .stat-card:hover {
+    @apply border-white/[0.12];
+    background: linear-gradient(145deg, #1a2840 0%, #111928 100%);
+  }
+
+  /* ── Buttons ── */
+  .btn-primary {
+    background: linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%);
+    @apply hover:brightness-110 active:brightness-90
+           text-white text-sm font-semibold px-4 py-2 rounded-lg
+           transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed
+           shadow-sm;
+  }
+  .btn-cta {
+    /* High-visibility CTA — green like DE Studio's "Create New" button */
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    @apply hover:brightness-110 active:brightness-90
+           text-white text-sm font-semibold px-5 py-2.5 rounded-lg
+           transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed
+           shadow-sm flex items-center gap-2;
+  }
+  .btn-secondary {
+    @apply border border-white/[0.12] hover:border-white/[0.22] hover:bg-white/[0.05]
+           text-zinc-300 hover:text-zinc-50 text-sm font-medium px-4 py-2 rounded-lg
+           transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply hover:bg-white/[0.05] text-zinc-400 hover:text-zinc-200
+           text-sm px-4 py-2 rounded-lg transition-colors duration-150;
+  }
+  .btn-danger {
+    @apply bg-red-600 hover:bg-red-500 active:brightness-90
+           text-white text-sm font-semibold px-4 py-2 rounded-lg
+           transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-warning {
+    @apply bg-amber-600 hover:bg-amber-500 active:brightness-90
+           text-white text-sm font-semibold px-4 py-2 rounded-lg
+           transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  /* ── Form elements ── */
+  .input {
+    background: rgba(7, 9, 15, 0.6);
+    @apply border border-white/[0.09] text-zinc-100 rounded-lg
+           px-3 py-2 w-full text-sm
+           focus:outline-none focus:border-brand-400/50 focus:ring-1 focus:ring-brand/[0.15]
+           placeholder:text-zinc-600
+           transition-colors duration-150;
+  }
+  .label { @apply block text-xs font-medium text-zinc-400 mb-1.5 tracking-wide; }
+
+  /* ── Section labels ── */
+  .section-label {
+    @apply text-[10px] font-bold tracking-[0.10em] text-zinc-600 uppercase;
+  }
+
+  /* ── Status badges ── */
+  .badge-pending   { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-zinc-800/60    text-zinc-400    border border-zinc-700/40; }
+  .badge-running   { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-950/60   text-amber-400   border border-amber-900/40; }
+  .badge-completed { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-950/60 text-emerald-400 border border-emerald-900/40; }
+  .badge-failed    { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-red-950/60     text-red-400     border border-red-900/40; }
+
+  /* ── Icon containers ── */
+  .icon-box {
+    @apply w-9 h-9 rounded-xl flex items-center justify-center shrink-0;
+  }
+  .icon-box-sm {
+    @apply w-7 h-7 rounded-lg flex items-center justify-center shrink-0;
+  }
+
+  /* ── Divider ── */
+  .divider { @apply border-t border-white/[0.06] my-4; }
+
+  /* ── Monospaced numbers ── */
+  .num { @apply font-mono tabular-nums; }
+}
+

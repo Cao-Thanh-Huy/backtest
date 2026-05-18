@@ -1,0 +1,567 @@
+"""
+Engine D: Purged Walk-Forward AI Trainer
+- TimeSeriesSplit with gap (no data leakage between folds)
+- Supports XGBoost, LightGBM, Random Forest
+- MLflow autolog + artifact save to MinIO
+"""
+from __future__ import annotations
+
+import io
+import pickle
+import random
+from typing import Any, Callable
+
+import mlflow
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import (
+    accuracy_score, f1_score, roc_auc_score,
+    mean_squared_error, mean_absolute_error, r2_score,
+)
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+import lightgbm as lgb
+
+from app.core.config import settings
+from app.core.storage import upload_file
+
+
+def _build_xgboost_classifier(hyperparameters: dict[str, Any]):
+    try:
+        import xgboost as xgb
+    except ImportError as exc:
+        raise ValueError("xgboost is not installed in this runtime. Choose lightgbm or random_forest.") from exc
+    return xgb.XGBClassifier(use_label_encoder=False, eval_metric="logloss", random_state=42, **hyperparameters)
+
+
+def _build_xgboost_regressor(hyperparameters: dict[str, Any]):
+    try:
+        import xgboost as xgb
+    except ImportError as exc:
+        raise ValueError("xgboost is not installed in this runtime. Choose lightgbm or random_forest.") from exc
+    return xgb.XGBRegressor(random_state=42, **hyperparameters)
+
+
+_CLASSIFICATION_MODELS = {
+    "xgboost": _build_xgboost_classifier,
+    "lightgbm": lambda hp: lgb.LGBMClassifier(random_state=42, verbose=-1, **hp),
+    "random_forest": lambda hp: RandomForestClassifier(random_state=42, **hp),
+}
+
+_REGRESSION_MODELS = {
+    "xgboost": _build_xgboost_regressor,
+    "lightgbm": lambda hp: lgb.LGBMRegressor(random_state=42, verbose=-1, **hp),
+    "random_forest": lambda hp: RandomForestRegressor(random_state=42, **hp),
+}
+
+_DEFAULT_OPTIMIZE_METRIC = {
+    "classification": "accuracy_mean",
+    "regression": "r2_mean",
+}
+
+_MINIMIZE_METRICS = {"rmse", "rmse_mean", "mae", "mae_mean"}
+
+
+def _resolve_optimize_metric(aggregate: dict[str, Any], task: str, requested: str | None) -> str:
+    fallback_order = {
+        "classification": ("accuracy_mean", "f1_weighted_mean", "balanced_accuracy_mean", "roc_auc_mean"),
+        "regression": ("r2_mean", "rmse_mean", "mae_mean"),
+    }
+    if requested and requested in aggregate:
+        return requested
+    for candidate in fallback_order[task]:
+        if candidate in aggregate:
+            return candidate
+    return next(iter(aggregate.keys()), _DEFAULT_OPTIMIZE_METRIC[task])
+
+
+def _default_search_space(model_type: str) -> dict[str, Any]:
+    if model_type == "lightgbm":
+        return {
+            "n_estimators": [100, 200, 400],
+            "learning_rate": [0.03, 0.05, 0.1],
+            "num_leaves": [15, 31, 63],
+            "subsample": [0.7, 0.9, 1.0],
+            "colsample_bytree": [0.7, 0.9, 1.0],
+            "min_child_samples": [10, 20, 40],
+        }
+    if model_type == "xgboost":
+        return {
+            "n_estimators": [100, 200, 400],
+            "learning_rate": [0.03, 0.05, 0.1],
+            "max_depth": [3, 5, 7],
+            "subsample": [0.7, 0.9, 1.0],
+            "colsample_bytree": [0.7, 0.9, 1.0],
+        }
+    if model_type == "random_forest":
+        return {
+            "n_estimators": [100, 200, 400],
+            "max_depth": [None, 5, 10, 20],
+            "min_samples_split": [2, 5, 10],
+            "min_samples_leaf": [1, 2, 4],
+            "max_features": ["sqrt", "log2", None],
+        }
+    return {}
+
+
+def _is_classification(y: pd.Series) -> bool:
+    """Infer task type. Treats integer-typed columns with <=10 unique values as classification."""
+    return y.dtype not in (float, np.float32, np.float64) and y.nunique() <= 10
+
+
+def _compute_metrics(y_true, y_pred, task: str, y_proba=None) -> dict[str, float]:
+    if task == "classification":
+        metrics = {
+            "accuracy": float(accuracy_score(y_true, y_pred)),
+            "f1_weighted": float(f1_score(y_true, y_pred, average="weighted", zero_division=0)),
+        }
+        try:
+            if y_proba is not None:
+                # Use probability scores for a proper AUROC
+                scores = y_proba[:, 1] if y_proba.ndim == 2 and y_proba.shape[1] == 2 else y_proba
+                metrics["roc_auc"] = float(roc_auc_score(y_true, scores, multi_class="ovr"))
+            else:
+                metrics["roc_auc"] = float(roc_auc_score(y_true, y_pred, multi_class="ovr"))
+        except Exception:
+            pass
+        return metrics
+    else:
+        return {
+            "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+            "mae": float(mean_absolute_error(y_true, y_pred)),
+            "r2": float(r2_score(y_true, y_pred)),
+        }
+
+
+def _aggregate_fold_metrics(fold_metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    agg_metrics: dict[str, Any] = {}
+    numeric_keys = [k for k in fold_metrics[0] if k != "fold"]
+    for key in numeric_keys:
+        vals = [m[key] for m in fold_metrics]
+        agg_metrics[f"{key}_mean"] = float(np.mean(vals))
+        agg_metrics[f"{key}_std"] = float(np.std(vals))
+    return agg_metrics
+
+
+def _extract_metric_value(metrics: dict[str, Any], metric_name: str) -> float:
+    if metric_name in metrics:
+        return float(metrics[metric_name])
+    mean_key = f"{metric_name}_mean"
+    if mean_key in metrics:
+        return float(metrics[mean_key])
+    raise ValueError(f"Metric {metric_name!r} not found in aggregate metrics: {list(metrics.keys())}")
+
+
+def _is_better_score(score: float, best_score: float | None, metric_name: str) -> bool:
+    if best_score is None:
+        return True
+    if metric_name in _MINIMIZE_METRICS or metric_name.replace("_mean", "") in _MINIMIZE_METRICS:
+        return score < best_score
+    return score > best_score
+
+
+def _sample_from_spec(spec: Any, rng: random.Random) -> Any:
+    if isinstance(spec, (list, tuple)):
+        if not spec:
+            raise ValueError("search space list cannot be empty")
+        return rng.choice(list(spec))
+    if isinstance(spec, dict):
+        if "values" in spec:
+            values = spec.get("values") or []
+            if not values:
+                raise ValueError("search space 'values' cannot be empty")
+            return rng.choice(values)
+        if "min" in spec and "max" in spec:
+            lo = spec["min"]
+            hi = spec["max"]
+            if lo > hi:
+                raise ValueError(f"Invalid search range: min={lo} > max={hi}")
+            value_type = str(spec.get("type", "float")).lower()
+            if value_type == "int":
+                return rng.randint(int(lo), int(hi))
+            return rng.uniform(float(lo), float(hi))
+    raise ValueError(
+        "Unsupported search space spec. Use list/tuple, {'values': [...]}, or {'min': x, 'max': y, 'type': 'int|float'}."
+    )
+
+
+def _compute_shap_summary(
+    model: Any,
+    X: np.ndarray,
+    feature_cols: list[str],
+    max_rows: int = 500,
+) -> dict[str, Any] | None:
+    """
+    Compute a compact SHAP summary (mean absolute contribution per feature).
+    This is optional; if shap isn't available or explainer fails, returns None.
+    """
+    try:
+        import shap  # type: ignore
+    except Exception:
+        return None
+
+    if len(feature_cols) == 0 or X.size == 0:
+        return None
+
+    try:
+        if len(X) > max_rows:
+            rng = np.random.default_rng(42)
+            idx = rng.choice(len(X), size=max_rows, replace=False)
+            X_sample = X[idx]
+        else:
+            X_sample = X
+
+        explainer = shap.TreeExplainer(model)
+        raw_values = explainer.shap_values(X_sample)
+
+        # shap may return list[class] or ndarray; normalize to (n_samples, n_features)
+        if isinstance(raw_values, list):
+            if len(raw_values) == 0:
+                return None
+            values = raw_values[1] if len(raw_values) > 1 else raw_values[0]
+        else:
+            values = raw_values
+
+        values = np.asarray(values)
+        if values.ndim == 3:
+            values = np.mean(np.abs(values), axis=2)
+
+        if values.ndim != 2:
+            return None
+
+        mean_abs = np.mean(np.abs(values), axis=0)
+        if mean_abs.shape[0] != len(feature_cols):
+            return None
+
+        by_feature = {
+            col: float(val)
+            for col, val in sorted(
+                zip(feature_cols, mean_abs, strict=False),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        }
+
+        return {
+            "method": "shap_tree",
+            "n_samples": int(len(X_sample)),
+            "mean_abs": by_feature,
+            "top_features": dict(list(by_feature.items())[:20]),
+        }
+    except Exception:
+        return None
+
+
+def _run_walk_forward_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    model_builder: Callable[[dict[str, Any]], Any],
+    hyperparameters: dict[str, Any],
+    task: str,
+    n_splits: int,
+    gap: int,
+    fold_progress_cb: Callable[[int, int, float | None], None] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
+    tscv = TimeSeriesSplit(n_splits=n_splits, gap=gap)
+    fold_metrics: list[dict[str, Any]] = []
+    last_test_idx: np.ndarray | None = None
+
+    for fold_idx, (train_idx, test_idx) in enumerate(tscv.split(X)):
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        model = model_builder(hyperparameters)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+
+        y_proba = None
+        if task == "classification" and hasattr(model, "predict_proba"):
+            try:
+                y_proba = model.predict_proba(X_test)
+            except Exception:
+                pass
+
+        metrics = _compute_metrics(y_test, y_pred, task, y_proba=y_proba)
+        metrics["fold"] = fold_idx
+        fold_metrics.append(metrics)
+        last_test_idx = test_idx
+
+        if fold_progress_cb:
+            best = None
+            try:
+                primary = "accuracy" if task == "classification" else "r2"
+                best = max(m.get(primary, 0.0) for m in fold_metrics)
+            except Exception:
+                pass
+            fold_progress_cb(fold_idx + 1, n_splits, best)
+
+    agg_metrics = _aggregate_fold_metrics(fold_metrics)
+    oos_start_index = int(last_test_idx[0]) if last_test_idx is not None else len(X)
+    return fold_metrics, agg_metrics, oos_start_index
+
+
+def tune_hyperparameters_walk_forward(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+    model_type: str,
+    base_hyperparameters: dict[str, Any] | None,
+    n_trials: int = 20,
+    search_space: dict[str, Any] | None = None,
+    optimize_metric: str | None = None,
+    n_splits: int = 5,
+    gap: int = 10,
+    task: str | None = None,
+    trial_progress_cb: Callable[[int, int, float | None], None] | None = None,
+) -> dict[str, Any]:
+    X = df[feature_cols].fillna(0).values
+    y = df[target_col].values
+
+    if task is None:
+        task = "classification" if _is_classification(df[target_col]) else "regression"
+    elif task not in ("classification", "regression"):
+        raise ValueError(f"task must be 'classification' or 'regression', got {task!r}")
+
+    model_registry = _CLASSIFICATION_MODELS if task == "classification" else _REGRESSION_MODELS
+    if model_type not in model_registry:
+        raise ValueError(f"Unknown model_type: {model_type!r}. Choose from {list(model_registry)}")
+
+    if n_trials < 1:
+        raise ValueError("n_trials must be >= 1")
+
+    base_hyperparameters = dict(base_hyperparameters or {})
+    merged_search_space = {**_default_search_space(model_type), **(search_space or {})}
+    rng = random.Random(42)
+
+    candidates: list[dict[str, Any]] = [dict(base_hyperparameters)]
+    seen = {tuple(sorted(candidates[0].items()))}
+    max_attempts = max(n_trials * 5, 10)
+    attempts = 0
+    while len(candidates) < n_trials and attempts < max_attempts:
+        attempts += 1
+        sampled = dict(base_hyperparameters)
+        for key, spec in merged_search_space.items():
+            sampled[key] = _sample_from_spec(spec, rng)
+        signature = tuple(sorted(sampled.items()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        candidates.append(sampled)
+
+    best_params: dict[str, Any] | None = None
+    best_folds: list[dict[str, Any]] | None = None
+    best_aggregate: dict[str, Any] | None = None
+    best_oos_start_index = 0
+    best_score: float | None = None
+    trial_summaries: list[dict[str, Any]] = []
+
+    for idx, params in enumerate(candidates, start=1):
+        folds, aggregate, oos_start_index = _run_walk_forward_cv(
+            X=X,
+            y=y,
+            model_builder=model_registry[model_type],
+            hyperparameters=params,
+            task=task,
+            n_splits=n_splits,
+            gap=gap,
+            fold_progress_cb=None,
+        )
+        resolved_metric = _resolve_optimize_metric(aggregate, task, optimize_metric)
+        score = _extract_metric_value(aggregate, resolved_metric)
+
+        trial_summaries.append({
+            "trial": idx,
+            "score": score,
+            "hyperparameters": params,
+            "aggregate": aggregate,
+        })
+
+        if _is_better_score(score, best_score, resolved_metric):
+            best_score = score
+            best_params = params
+            best_folds = folds
+            best_aggregate = aggregate
+            best_oos_start_index = oos_start_index
+            optimize_metric = resolved_metric
+
+        if trial_progress_cb:
+            trial_progress_cb(idx, len(candidates), best_score)
+
+    if best_params is None or best_folds is None or best_aggregate is None:
+        raise RuntimeError("Failed to evaluate any hyperparameter candidate")
+
+    return {
+        "best_hyperparameters": best_params,
+        "cv_metrics": {
+            "folds": best_folds,
+            "aggregate": best_aggregate,
+        },
+        "best_score": float(best_score) if best_score is not None else None,
+        "optimize_metric": optimize_metric or _DEFAULT_OPTIMIZE_METRIC[task],
+        "trials": trial_summaries,
+        "task": task,
+        "oos_start_index": best_oos_start_index,
+    }
+    merged_search_space = {**_default_search_space(model_type), **(search_space or {})}
+    rng = random.Random(42)
+
+    candidates: list[dict[str, Any]] = [dict(base_hyperparameters)]
+    seen = {tuple(sorted(candidates[0].items()))}
+    max_attempts = max(n_trials * 5, 10)
+    attempts = 0
+    while len(candidates) < n_trials and attempts < max_attempts:
+        attempts += 1
+        sampled = dict(base_hyperparameters)
+        for key, spec in merged_search_space.items():
+            sampled[key] = _sample_from_spec(spec, rng)
+        signature = tuple(sorted(sampled.items()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        candidates.append(sampled)
+
+    best_params: dict[str, Any] | None = None
+    best_folds: list[dict[str, Any]] | None = None
+    best_aggregate: dict[str, Any] | None = None
+    best_oos_start_index = 0
+    best_score: float | None = None
+    trial_summaries: list[dict[str, Any]] = []
+
+    for idx, params in enumerate(candidates, start=1):
+        folds, aggregate, oos_start_index = _run_walk_forward_cv(
+            X=X,
+            y=y,
+            model_builder=model_registry[model_type],
+            hyperparameters=params,
+            task=task,
+            n_splits=n_splits,
+            gap=gap,
+            fold_progress_cb=None,
+        )
+        score = _extract_metric_value(aggregate, optimize_metric)
+
+        trial_summaries.append({
+            "trial": idx,
+            "score": score,
+            "hyperparameters": params,
+            "aggregate": aggregate,
+        })
+
+        if _is_better_score(score, best_score, optimize_metric):
+            best_score = score
+            best_params = params
+            best_folds = folds
+            best_aggregate = aggregate
+            best_oos_start_index = oos_start_index
+            optimize_metric = resolved_metric
+
+        if trial_progress_cb:
+            trial_progress_cb(idx, len(candidates), best_score)
+
+    if best_params is None or best_folds is None or best_aggregate is None:
+        raise RuntimeError("Failed to evaluate any hyperparameter candidate")
+
+    return {
+        "best_hyperparameters": best_params,
+        "cv_metrics": {
+            "folds": best_folds,
+            "aggregate": best_aggregate,
+        },
+        "best_score": float(best_score) if best_score is not None else None,
+        "optimize_metric": optimize_metric,
+        "trials": trial_summaries,
+        "task": task,
+        "oos_start_index": best_oos_start_index,
+    }
+
+
+def train_walk_forward(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+    model_type: str,
+    hyperparameters: dict[str, Any],
+    n_splits: int = 5,
+    gap: int = 10,
+    model_id: str = "",
+    task: str | None = None,
+    fold_progress_cb: Callable[[int, int, float | None], None] | None = None,
+) -> dict[str, Any]:
+    """
+    Purged walk-forward cross-validation training.
+    Returns dict with: model (fitted on full data), cv_metrics, mlflow_run_id.
+    """
+    X = df[feature_cols].fillna(0).values
+    y = df[target_col].values
+
+    if task is None:
+        task = "classification" if _is_classification(df[target_col]) else "regression"
+    elif task not in ("classification", "regression"):
+        raise ValueError(f"task must be 'classification' or 'regression', got {task!r}")
+    model_registry = _CLASSIFICATION_MODELS if task == "classification" else _REGRESSION_MODELS
+
+    if model_type not in model_registry:
+        raise ValueError(f"Unknown model_type: {model_type!r}. Choose from {list(model_registry)}")
+
+    model_builder = model_registry[model_type]
+
+    mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+
+    with mlflow.start_run(run_name=f"{model_type}_{target_col}_{model_id[:8]}") as run:
+        mlflow.log_params({
+            "model_type": model_type,
+            "target_col": target_col,
+            "n_splits": n_splits,
+            "gap": gap,
+            "n_features": len(feature_cols),
+            **hyperparameters,
+        })
+
+        fold_metrics, agg_metrics, oos_start_index = _run_walk_forward_cv(
+            X=X,
+            y=y,
+            model_builder=model_builder,
+            hyperparameters=hyperparameters,
+            task=task,
+            n_splits=n_splits,
+            gap=gap,
+            fold_progress_cb=fold_progress_cb,
+        )
+
+        for metrics in fold_metrics:
+            fold_idx = metrics["fold"]
+            for k, v in metrics.items():
+                if k != "fold":
+                    mlflow.log_metric(f"fold_{fold_idx}_{k}", v)
+
+        mlflow.log_metrics({k: v for k, v in agg_metrics.items()})
+
+        # Refit on full dataset
+        final_model = model_builder(hyperparameters)
+        final_model.fit(X, y)
+
+        explainability = _compute_shap_summary(final_model, X, feature_cols)
+        if explainability is not None:
+            mlflow.log_dict(explainability, "explainability/shap_summary.json")
+
+        # Save model artifact to MinIO
+        model_bytes = pickle.dumps(final_model)
+        s3_model_path = upload_file(
+            settings.minio_bucket_models,
+            f"models/{model_id}/model.pkl",
+            model_bytes,
+            "application/octet-stream",
+        )
+
+        mlflow.log_param("s3_model_path", s3_model_path)
+        run_id = run.info.run_id
+
+    return {
+        "model": final_model,
+        "cv_metrics": {"folds": fold_metrics, "aggregate": agg_metrics},
+        "explainability": explainability,
+        "mlflow_run_id": run_id,
+        "s3_model_path": s3_model_path,
+        "task": task,
+        "oos_start_index": oos_start_index,
+    }
