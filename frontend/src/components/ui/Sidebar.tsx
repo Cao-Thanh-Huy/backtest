@@ -33,7 +33,7 @@ const NAV = [
     border: 'border-cyan-500/[0.20]',
   },
   {
-    href: '/lab/indicators',
+    href: '/lab/feature-factory',
     label: 'Feature Factory',
     icon: Activity,
     color: 'text-accent-teal',
@@ -57,7 +57,7 @@ const NAV = [
     border: 'border-rose-500/[0.20]',
   },
   {
-    href: '/lab/features',
+    href: '/lab/feature-selection',
     label: 'Feature Selection',
     icon: Filter,
     color: 'text-accent-sky',

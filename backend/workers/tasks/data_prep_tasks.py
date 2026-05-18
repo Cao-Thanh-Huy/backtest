@@ -215,25 +215,7 @@ def prepare_data_task(self: Task, prep_id: str):
             if df[col].dtype != pl.Null:
                 df = df.with_columns(pl.col(col).fill_null(strategy="forward"))
 
-        # --- STEP 6: Normalization & Scaling ---
-        self.update_state(state="PROGRESS", meta={
-            "progress": 70,
-            "message": "Normalizing features...",
-            "step": "Normalization",
-            "sub": {"status": "Scaling features to consistent ranges"},
-        })
 
-        # Normalize numeric columns (optional based on config)
-        if bool(norm_cfg.get("enable_scaling") or norm_cfg.get("enabled")):
-            from sklearn.preprocessing import StandardScaler
-
-            numeric_types = {pl.Float64, pl.Float32, pl.Int64, pl.Int32, pl.Int16, pl.Int16, pl.UInt64, pl.UInt32, pl.UInt16}
-            numeric_cols = [c for c in df.columns if df[c].dtype in numeric_types]
-            if numeric_cols:
-                scaler = StandardScaler()
-                scaled_data = scaler.fit_transform(df.select(numeric_cols))
-                for i, col in enumerate(numeric_cols):
-                    df = df.with_columns(pl.lit(scaled_data[:, i]).alias(f"{col}_scaled"))
 
         # --- Upload prepared data ---
         # --- Filter target columns (y_*) for clean output ---

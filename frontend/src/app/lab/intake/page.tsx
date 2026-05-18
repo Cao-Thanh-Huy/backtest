@@ -27,70 +27,70 @@ const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false })
 
 const TIMEFRAMES = ['5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d']
 
-type EnrichGroup = { label: string; items: { id: string; label: string; desc: string }[] }
+type EnrichGroup = { label: string; label_vi?: string; items: { id: string; label: string; desc: string; label_vi?: string; desc_vi?: string }[] }
 
 const ENRICH_GROUPS: EnrichGroup[] = [
   {
-    label: 'Technical Indicators (Free)',
+    label: 'Technical Indicators (Free)', label_vi: 'Chỉ Báo Kỹ Thuật (Miễn Phí)',
     items: [
-      { id: 'log_return', label: 'Log Return', desc: 'Natural log of price change, standardized for ML' },
-      { id: 'atr', label: 'ATR (14)', desc: 'Average true range, volatility measure' },
-      { id: 'realized_volatility', label: 'Realized Vol (24h)', desc: 'Log return rolling std, actual volatility' },
-      { id: 'rolling_std', label: 'Rolling Std (24h)', desc: 'Price return std, regime volatility' },
-      { id: 'rsi_14', label: 'RSI (14)', desc: 'Relative strength index, momentum' },
-      { id: 'ema_12', label: 'EMA (12)', desc: 'Fast exponential moving average' },
-      { id: 'ema_26', label: 'EMA (26)', desc: 'Slow exponential moving average' },
-      { id: 'ema_spread', label: 'EMA Spread', desc: 'MACD-like, trend signal' },
+      { id: 'log_return', label: 'Log Return', label_vi: 'Log Return', desc: 'Natural log of price change, standardized for ML', desc_vi: 'Log tự nhiên biến động giá, chuẩn hoá cho ML' },
+      { id: 'atr', label: 'ATR (14)', label_vi: 'ATR (14)', desc: 'Average true range, volatility measure', desc_vi: 'Biên độ dao động trung bình, đo lường biến động' },
+      { id: 'realized_volatility', label: 'Realized Vol (24h)', label_vi: 'Realized Vol (24h)', desc: 'Log return rolling std, actual volatility', desc_vi: 'Độ lệch chuẩn log return rolling, biến động thực tế' },
+      { id: 'rolling_std', label: 'Rolling Std (24h)', label_vi: 'Rolling Std (24h)', desc: 'Price return std, regime volatility', desc_vi: 'Độ lệch chuẩn return giá, biến động theo chế độ' },
+      { id: 'rsi_14', label: 'RSI (14)', label_vi: 'RSI (14)', desc: 'Relative strength index, momentum', desc_vi: 'Chỉ số sức mạnh tương đối, động lượng' },
+      { id: 'ema_12', label: 'EMA (12)', label_vi: 'EMA (12)', desc: 'Fast exponential moving average', desc_vi: 'Đường trung bình động hàm mũ nhanh' },
+      { id: 'ema_26', label: 'EMA (26)', label_vi: 'EMA (26)', desc: 'Slow exponential moving average', desc_vi: 'Đường trung bình động hàm mũ chậm' },
+      { id: 'ema_spread', label: 'EMA Spread', label_vi: 'EMA Spread', desc: 'MACD-like, trend signal', desc_vi: 'Tương tự MACD, tín hiệu xu hướng' },
     ],
   },
   {
-    label: 'Time Features (Free)',
+    label: 'Time Features (Free)', label_vi: 'Đặc Trưng Thời Gian (Miễn Phí)',
     items: [
-      { id: 'hour_of_day', label: 'Hour of Day', desc: 'Trading session: UTC 0-23' },
-      { id: 'day_of_week', label: 'Day of Week', desc: 'Weekday effect: Mon(0) - Sun(6)' },
+      { id: 'hour_of_day', label: 'Hour of Day', label_vi: 'Giờ Trong Ngày', desc: 'Trading session: UTC 0-23', desc_vi: 'Phiên giao dịch: UTC 0-23' },
+      { id: 'day_of_week', label: 'Day of Week', label_vi: 'Ngày Trong Tuần', desc: 'Weekday effect: Mon(0) - Sun(6)', desc_vi: 'Hiệu ứng ngày trong tuần: T2(0) - CN(6)' },
     ],
   },
   {
-    label: 'Futures & Derivatives',
+    label: 'Futures & Derivatives', label_vi: 'Hợp Đồng Tương Lai & Phái Sinh',
     items: [
-      { id: 'funding_rate', label: 'Funding Rate', desc: 'Perpetual premium/discount vs spot' },
-      { id: 'funding_change', label: 'Funding Change', desc: 'Sentiment shift in derivative market' },
-      { id: 'open_interest', label: 'Open Interest', desc: 'Total open futures contracts' },
-      { id: 'oi_change', label: 'OI Change', desc: 'Leverage building/unwinding' },
-      { id: 'long_short_ratio', label: 'Long/Short Ratio', desc: 'Aggregated trader positioning' },
-      { id: 'liquidations', label: 'Liquidations', desc: 'Forced close volume pressure' },
-      { id: 'basis', label: 'Futures Basis', desc: 'Spot-futures spread signal' },
+      { id: 'funding_rate', label: 'Funding Rate', label_vi: 'Funding Rate', desc: 'Perpetual premium/discount vs spot', desc_vi: 'Phần bù/chiết khấu hợp đồng vĩnh cửu so với spot' },
+      { id: 'funding_change', label: 'Funding Change', label_vi: 'Biến Động Funding', desc: 'Sentiment shift in derivative market', desc_vi: 'Thay đổi tâm lý thị trường phái sinh' },
+      { id: 'open_interest', label: 'Open Interest', label_vi: 'Open Interest', desc: 'Total open futures contracts', desc_vi: 'Tổng số hợp đồng tương lai đang mở' },
+      { id: 'oi_change', label: 'OI Change', label_vi: 'Biến Động OI', desc: 'Leverage building/unwinding', desc_vi: 'Tích lũy/giải phóng đòn bẩy' },
+      { id: 'long_short_ratio', label: 'Long/Short Ratio', label_vi: 'Tỷ Lệ Long/Short', desc: 'Aggregated trader positioning', desc_vi: 'Vị thế tổng hợp của nhà giao dịch' },
+      { id: 'liquidations', label: 'Liquidations', label_vi: 'Thanh Lý Cưỡng Bức', desc: 'Forced close volume pressure', desc_vi: 'Áp lực khối lượng từ lệnh đóng cưỡng bức' },
+      { id: 'basis', label: 'Futures Basis', label_vi: 'Futures Basis', desc: 'Spot-futures spread signal', desc_vi: 'Tín hiệu chênh lệch spot-futures' },
     ],
   },
   {
-    label: 'Market Sentiment',
+    label: 'Market Sentiment', label_vi: 'Tâm Lý Thị Trường',
     items: [
-      { id: 'fear_greed', label: 'Fear & Greed Index', desc: 'Composite sentiment 0-100' },
-      { id: 'google_trends', label: 'Google Trends', desc: 'Bitcoin search volume' },
-      { id: 'social_volume', label: 'Social Volume', desc: 'Social media mentions' },
+      { id: 'fear_greed', label: 'Fear & Greed Index', label_vi: 'Chỉ Số Fear & Greed', desc: 'Composite sentiment 0-100', desc_vi: 'Tâm lý tổng hợp 0-100' },
+      { id: 'google_trends', label: 'Google Trends', label_vi: 'Google Trends', desc: 'Bitcoin search volume', desc_vi: 'Khối lượng tìm kiếm Bitcoin' },
+      { id: 'social_volume', label: 'Social Volume', label_vi: 'Khối Lượng Mạng Xã Hội', desc: 'Social media mentions', desc_vi: 'Lượt đề cập trên mạng xã hội' },
     ],
   },
   {
-    label: 'On-chain Metrics',
+    label: 'On-chain Metrics', label_vi: 'Chỉ Số On-chain',
     items: [
-      { id: 'mvrv', label: 'MVRV Z-Score', desc: 'Market vs realised value divergence' },
-      { id: 'sopr', label: 'SOPR', desc: 'Spent output profit ratio' },
-      { id: 'exchange_flows', label: 'Exchange Net Flow', desc: 'BTC in/outflow to exchanges' },
-      { id: 'active_addresses', label: 'Active Addresses', desc: 'Daily unique addresses' },
-      { id: 'nvt', label: 'NVT Ratio', desc: 'Network value to transactions' },
-      { id: 'puell_multiple', label: 'Puell Multiple', desc: 'Miner revenue multiple' },
-      { id: 'hash_rate', label: 'Hash Rate', desc: 'Network difficulty proxy' },
-      { id: 'realized_price', label: 'Realized Price', desc: 'All-time cost basis' },
+      { id: 'mvrv', label: 'MVRV Z-Score', label_vi: 'MVRV Z-Score', desc: 'Market vs realised value divergence', desc_vi: 'Phân kỳ giá trị thị trường vs giá trị thực hoá' },
+      { id: 'sopr', label: 'SOPR', label_vi: 'SOPR', desc: 'Spent output profit ratio', desc_vi: 'Tỷ lệ lợi nhuận đầu ra đã chi' },
+      { id: 'exchange_flows', label: 'Exchange Net Flow', label_vi: 'Dòng Tiền Ròng Sàn', desc: 'BTC in/outflow to exchanges', desc_vi: 'Luồng BTC vào/ra các sàn giao dịch' },
+      { id: 'active_addresses', label: 'Active Addresses', label_vi: 'Địa Chỉ Hoạt Động', desc: 'Daily unique addresses', desc_vi: 'Số địa chỉ duy nhất hàng ngày' },
+      { id: 'nvt', label: 'NVT Ratio', label_vi: 'NVT Ratio', desc: 'Network value to transactions', desc_vi: 'Giá trị mạng lưới so với giao dịch' },
+      { id: 'puell_multiple', label: 'Puell Multiple', label_vi: 'Puell Multiple', desc: 'Miner revenue multiple', desc_vi: 'Bội số doanh thu thợ đào' },
+      { id: 'hash_rate', label: 'Hash Rate', label_vi: 'Hash Rate', desc: 'Network difficulty proxy', desc_vi: 'Đại diện độ khó mạng lưới' },
+      { id: 'realized_price', label: 'Realized Price', label_vi: 'Realized Price', desc: 'All-time cost basis', desc_vi: 'Giá vốn trung bình toàn thời gian' },
     ],
   },
   {
-    label: 'Macro / Risk',
+    label: 'Macro / Risk', label_vi: 'Vĩ Mô / Rủi Ro',
     items: [
-      { id: 'dxy', label: 'DXY (Dollar Index)', desc: 'USD strength vs major currencies' },
-      { id: 'sp500', label: 'S&P 500', desc: 'Equity risk-on correlation proxy' },
-      { id: 'gold', label: 'Gold (XAU/USD)', desc: 'Safe-haven asset correlation' },
-      { id: 'vix', label: 'VIX', desc: 'Equity volatility / fear gauge' },
-      { id: 'us10y', label: 'US 10Y Yield', desc: 'Risk-free rate signal' },
+      { id: 'dxy', label: 'DXY (Dollar Index)', label_vi: 'DXY (Chỉ Số Đô La)', desc: 'USD strength vs major currencies', desc_vi: 'Sức mạnh USD so với các đồng tiền chính' },
+      { id: 'sp500', label: 'S&P 500', label_vi: 'S&P 500', desc: 'Equity risk-on correlation proxy', desc_vi: 'Đại diện tương quan rủi ro cổ phiếu' },
+      { id: 'gold', label: 'Gold (XAU/USD)', label_vi: 'Gold (XAU/USD)', desc: 'Safe-haven asset correlation', desc_vi: 'Tương quan tài sản trú ẩn an toàn' },
+      { id: 'vix', label: 'VIX', label_vi: 'VIX', desc: 'Equity volatility / fear gauge', desc_vi: 'Biến động cổ phiếu / thước đo sợ hãi' },
+      { id: 'us10y', label: 'US 10Y Yield', label_vi: 'US 10Y Yield', desc: 'Risk-free rate signal', desc_vi: 'Tín hiệu lãi suất phi rủi ro' },
     ],
   },
 ]
@@ -149,13 +149,14 @@ interface QualityInsights {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, color }: {
+function StatCard({ label, value, sub, color, title }: {
+  title?: string
   label: string; value: string; sub?: string
   color?: 'green' | 'yellow' | 'red'
 }) {
   const vc = color === 'green' ? 'text-emerald-400' : color === 'yellow' ? 'text-amber-400' : color === 'red' ? 'text-red-400' : 'text-white'
   return (
-    <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
+    <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }} title={title}>
       <div className="section-label mb-2">{label}</div>
       <div className={"text-2xl font-bold tabular-nums tracking-tight " + vc}>{value}</div>
       {sub && <div className="text-[11px] text-zinc-600 mt-1">{sub}</div>}
@@ -552,6 +553,7 @@ export default function BTCIntakePage() {
   })
 
   async function handleFetch() {
+    if (!symbol.trim()) { setFetchError('Please enter a Symbol'); return }
     if (dateFrom >= dateTo) { setFetchError('"From" must be before "To"'); return }
     setFetchError(null); setFetching(true)
     try {
@@ -603,11 +605,11 @@ export default function BTCIntakePage() {
     [selected?.timeframe, chartData, stats],
   )
 
-  const TABS: { id: DetailTab; label: string }[] = [
-    { id: 'chart', label: 'Chart' },
-    { id: 'preview', label: 'Preview' },
-    { id: 'stats', label: 'Statistics' },
-    { id: 'quality', label: 'Quality' },
+  const TABS: { id: DetailTab; label: string; title?: string }[] = [
+    { id: 'chart', label: 'Chart', title: 'Biểu Đồ' },
+    { id: 'preview', label: 'Preview', title: 'Xem Trước' },
+    { id: 'stats', label: 'Statistics', title: 'Thống Kê' },
+    { id: 'quality', label: 'Quality', title: 'Chất Lượng' },
   ]
 
   return (
@@ -617,7 +619,7 @@ export default function BTCIntakePage() {
         subtitle="Fetch comprehensive training data — historical load with enrichment columns"
         icon={<ClipboardList className="w-5 h-5" />}
         action={
-          <button onClick={() => setDrawerOpen(true)} className="btn-cta">
+          <button onClick={() => setDrawerOpen(true)} className="btn-cta" title="Tải Dữ Liệu Thị Trường">
             <Bitcoin className="w-3.5 h-3.5" />
             Fetch Market Data
           </button>
@@ -626,10 +628,10 @@ export default function BTCIntakePage() {
         list={
           <div className="flex flex-col h-full">
             <div className="p-3 space-y-2 border-b border-white/[0.06]">
-              <div className="section-label">Datasets</div>
+              <div className="section-label" title="Tập Dữ Liệu">Datasets</div>
               <input
                 className="input text-xs w-full"
-                placeholder="Search symbol / timeframe..."
+                placeholder="Search symbol / timeframe..." title="Tìm symbol / khung thời gian..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
@@ -711,24 +713,24 @@ export default function BTCIntakePage() {
 
                   <div className="flex gap-2 shrink-0 flex-wrap justify-end items-start">
                     <button onClick={handleDownload} className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5">
-                      <Download className="w-3.5 h-3.5" /> Download
+                      <Download className="w-3.5 h-3.5" /> <span title="Tải Xuống">Download</span>
                     </button>
                     <button
                       onClick={() => { loadPreview(selected.id); loadChart(selected.id); loadStats(selected.id) }}
                       className="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5"
                     >
-                      <RefreshCw className="w-3.5 h-3.5" /> Refresh
+                      <RefreshCw className="w-3.5 h-3.5" /> <span title="Làm Mới">Refresh</span>
                     </button>
                     {confirmDeleteId === selected.id ? (
                       <div className="flex gap-2 items-center">
-                        <span className="text-xs text-zinc-400">Delete?</span>
+                        <span className="text-xs text-zinc-400" title="Xoá?">Delete?</span>
                         <button onClick={() => deleteMut.mutate(selected.id)} disabled={deleteMut.isPending}
-                          className="btn-danger text-xs px-3 py-1.5">{deleteMut.isPending ? '...' : 'Confirm'}</button>
-                        <button onClick={() => setConfirmDeleteId(null)} className="btn-secondary text-xs px-3 py-1.5">Cancel</button>
+                          className="btn-danger text-xs px-3 py-1.5">{deleteMut.isPending ? '...' : <span title="Xác Nhận">Confirm</span>}</button>
+                        <button onClick={() => setConfirmDeleteId(null)} className="btn-secondary text-xs px-3 py-1.5" title="Huỷ">Cancel</button>
                       </div>
                     ) : (
                       <button onClick={() => setConfirmDeleteId(selected.id)} className="btn-danger text-xs px-3 py-1.5 flex items-center gap-1.5">
-                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                        <Trash2 className="w-3.5 h-3.5" /> <span title="Xoá">Delete</span>
                       </button>
                     )}
                   </div>
@@ -745,7 +747,7 @@ export default function BTCIntakePage() {
                           ? 'border-cyan-400 text-white'
                           : 'border-transparent text-zinc-500 hover:text-zinc-300 hover:border-white/[0.15]')
                       }
-                    >{t.label}</button>
+                     title={t.title}>{t.label}</button>
                   ))}
                 </div>
 
@@ -789,15 +791,15 @@ export default function BTCIntakePage() {
                       <>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           <StatCard
-                            label="Coverage"
+                            label="Coverage" title="Độ Phủ Sóng"
                             value={stats.coverage_pct.toFixed(1) + '%'}
                             sub="of expected bars"
                             color={stats.coverage_pct >= 99 ? 'green' : stats.coverage_pct >= 95 ? 'yellow' : 'red'}
                           />
-                          <StatCard label="Rows" value={stats.row_count.toLocaleString()} sub="total records" />
-                          <StatCard label="Columns" value={String(stats.column_count)} sub="data fields" />
+                          <StatCard label="Rows" title="Số Dòng" value={stats.row_count.toLocaleString()} sub="total records" />
+                          <StatCard label="Columns" title="Số Cột" value={String(stats.column_count)} sub="data fields" />
                           <StatCard
-                            label="Gaps"
+                            label="Gaps" title="Lỗ Hổng"
                             value={String(stats.gap_count)}
                             sub="missing bars"
                             color={stats.gap_count === 0 ? 'green' : stats.gap_count < 10 ? 'yellow' : 'red'}
@@ -806,7 +808,7 @@ export default function BTCIntakePage() {
 
                         {stats.price_range && (
                           <div className="card p-4">
-                            <div className="section-label mb-3">Price & Volume Summary</div>
+                            <div className="section-label mb-3" title="Tóm Tắt Giá & Khối Lượng">Price & Volume Summary</div>
                             <div className="flex gap-8 text-sm flex-wrap">
                               <div>
                                 <div className="text-[10px] text-zinc-600 mb-0.5">Close Low</div>
@@ -862,25 +864,25 @@ export default function BTCIntakePage() {
                       <>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           <StatCard
-                            label="Duplicate Candles"
+                            label="Duplicate Candles" title="Nến Trùng Lặp"
                             value={quality.duplicateCandles.toLocaleString()}
                             sub="same timestamp appears multiple times"
                             color={quality.duplicateCandles === 0 ? 'green' : 'red'}
                           />
                           <StatCard
-                            label="Corrupted Rows"
+                            label="Corrupted Rows" title="Dòng Hỏng"
                             value={quality.corruptedRows.toLocaleString()}
                             sub="invalid OHLC / volume values"
                             color={quality.corruptedRows === 0 ? 'green' : 'red'}
                           />
                           <StatCard
-                            label="Spikes"
+                            label="Spikes" title="Biến Động Đột Biến"
                             value={quality.spikes.toLocaleString()}
                             sub="extreme returns outlier candles"
                             color={quality.spikes < 3 ? 'green' : quality.spikes < 10 ? 'yellow' : 'red'}
                           />
                           <StatCard
-                            label="Missing Candles"
+                            label="Missing Candles" title="Nến Bị Thiếu"
                             value={quality.missingCandles.toLocaleString()}
                             sub="expected bars not present"
                             color={quality.missingCandles === 0 ? 'green' : 'red'}
@@ -889,13 +891,13 @@ export default function BTCIntakePage() {
 
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           <StatCard
-                            label="Gap Segments"
+                            label="Gap Segments" title="Đoạn Lỗ Hổng"
                             value={quality.gapSegments.toLocaleString()}
                             sub="discontinuity segments in time"
                             color={quality.gapSegments === 0 ? 'green' : 'yellow'}
                           />
                           <StatCard
-                            label="NaN Cells"
+                            label="NaN Cells" title="Ô Giá Trị Null"
                             value={quality.nullCells.toLocaleString()}
                             sub="sum of null values across columns"
                             color={quality.nullCells === 0 ? 'green' : 'yellow'}
@@ -907,7 +909,7 @@ export default function BTCIntakePage() {
                             color={quality.nullRowsEstimate === 0 ? 'green' : 'yellow'}
                           />
                           <StatCard
-                            label="Missing Funding"
+                            label="Missing Funding" title="Funding Rất Thiếu"
                             value={quality.missingFunding == null ? 'N/A' : quality.missingFunding.toLocaleString()}
                             sub="null count of funding_rate column"
                             color={quality.missingFunding == null || quality.missingFunding === 0 ? 'green' : 'yellow'}
@@ -927,20 +929,20 @@ export default function BTCIntakePage() {
                         </div>
 
                         <div className="card p-4">
-                          <div className="section-label mb-3">Integrity Summary</div>
+                          <div className="section-label mb-3" title="Tóm Tắt Tính Toàn Vẹn">Integrity Summary</div>
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
                             <div className="rounded-lg border border-white/[0.07] p-3 bg-white/[0.02]">
-                              <div className="text-zinc-500 mb-1">Expected Interval</div>
+                              <div className="text-zinc-500 mb-1"><span title="Khoảng Cách Kỳ Vọng">Expected Interval</span></div>
                               <div className="text-zinc-200 font-mono">
                                 {quality.expectedIntervalSec == null ? 'Unknown' : `${quality.expectedIntervalSec}s`}
                               </div>
                             </div>
                             <div className="rounded-lg border border-white/[0.07] p-3 bg-white/[0.02]">
-                              <div className="text-zinc-500 mb-1">Observed Rows</div>
+                              <div className="text-zinc-500 mb-1"><span title="Số Dòng Thực Tế">Observed Rows</span></div>
                               <div className="text-zinc-200 font-mono">{quality.observedRows.toLocaleString()}</div>
                             </div>
                             <div className="rounded-lg border border-white/[0.07] p-3 bg-white/[0.02]">
-                              <div className="text-zinc-500 mb-1">Expected Rows (range)</div>
+                              <div className="text-zinc-500 mb-1"><span title="Số Dòng Kỳ Vọng (khoảng)">Expected Rows (range)</span></div>
                               <div className="text-zinc-200 font-mono">{quality.expectedRows == null ? 'N/A' : quality.expectedRows.toLocaleString()}</div>
                             </div>
                           </div>
@@ -968,7 +970,7 @@ export default function BTCIntakePage() {
               <div>
                 <h2 className="font-semibold text-zinc-100 flex items-center gap-2">
                   <Bitcoin className="w-4 h-4 text-amber-500" />
-                  Fetch Historical Data
+                  <span title="Tải Dữ Liệu Lịch Sử">Fetch Historical Data</span>
                 </h2>
                 <p className="text-[11px] text-zinc-600 mt-0.5">Full historical load — select symbol, timeframe, date range</p>
               </div>
@@ -983,7 +985,7 @@ export default function BTCIntakePage() {
                 <div className="section-label">Core config</div>
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block space-y-1.5 col-span-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Symbol</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500" title="Mã Giao Dịch">Symbol</span>
                     <input
                       className="input text-sm w-full"
                       value={symbol}
@@ -992,23 +994,25 @@ export default function BTCIntakePage() {
                     />
                   </label>
                   <label className="block space-y-1.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Timeframe</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500" title="Khung Thời Gian">Timeframe</span>
                     <select className="input text-sm w-full" value={timeframe} onChange={e => setTimeframe(e.target.value)}>
                       {TIMEFRAMES.map(t => <option key={t}>{t}</option>)}
                     </select>
                   </label>
                   <label className="block space-y-1.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Source</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500" title="Nguồn">Source</span>
                     <input className="input text-sm w-full opacity-60 cursor-not-allowed" value="Binance" readOnly />
                   </label>
                   <label className="block space-y-1.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Date from</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500" title="Ngày bắt đầu">Date from</span>
                     <input type="date" className="input text-sm w-full" value={dateFrom}
+                      max={dateTo}
                       onChange={e => { setDateFrom(e.target.value); setFetchError(null) }} />
                   </label>
                   <label className="block space-y-1.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Date to</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500" title="Ngày kết thúc">Date to</span>
                     <input type="date" className="input text-sm w-full" value={dateTo}
+                      max={new Date().toISOString().slice(0, 10)}
                       onChange={e => { setDateTo(e.target.value); setFetchError(null) }} />
                   </label>
                 </div>
@@ -1021,10 +1025,10 @@ export default function BTCIntakePage() {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="section-label">Enrichment columns</div>
-                  <span className="text-[10px] text-zinc-500 font-mono">{enrichments.length} selected</span>
+                  <div className="section-label" title="Cột Làm Giàu Dữ Liệu">Enrichment columns</div>
+                  <span className="text-[10px] text-zinc-500 font-mono" title="đã chọn">{enrichments.length} selected</span>
                 </div>
-                <div className="text-[11px] text-zinc-600">
+                <div className="text-[11px] text-zinc-600" title="Ngoài OHLCV cơ bản. Nhiều cột = đặc trưng phong phú hơn cho mô hình.">
                   Beyond basic OHLCV. More columns = richer features for the model.
                 </div>
                 <div className="space-y-2">
@@ -1039,7 +1043,7 @@ export default function BTCIntakePage() {
                           className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.03] transition-colors"
                         >
                           <div className="flex items-center gap-2.5">
-                            <span className="text-sm font-medium text-zinc-300">{group.label}</span>
+                            <span className="text-sm font-medium text-zinc-300" title={group.label_vi}>{group.label}</span>
                             {groupSelected > 0 && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 font-mono">
                                 {groupSelected}
@@ -1064,10 +1068,10 @@ export default function BTCIntakePage() {
                                     {checked && <CheckCircle2 className="w-3 h-3 text-white" strokeWidth={3} />}
                                   </div>
                                   <div onClick={() => toggleEnrich(item.id)} className="flex-1 cursor-pointer">
-                                    <div className={'text-xs font-medium ' + (checked ? 'text-zinc-200' : 'text-zinc-400 hover:text-zinc-300')}>
+                                    <div className={'text-xs font-medium ' + (checked ? 'text-zinc-200' : 'text-zinc-400 hover:text-zinc-300')} title={item.label_vi}>
                                       {item.label}
                                     </div>
-                                    <div className="text-[10px] text-zinc-600 mt-0.5">{item.desc}</div>
+                                    <div className="text-[10px] text-zinc-600 mt-0.5" title={item.desc_vi}>{item.desc}</div>
                                   </div>
                                 </label>
                               )

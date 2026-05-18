@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore")
 # ── Memory guardrails ──────────────────────────────────────────────────────────
 # Feature Factory (pipeline generation) — hard cap on total output columns.
 # Reduces to prevent OOM when param_sweep generates large column sets.
-# NOTE: this is SEPARATE from Feature Selection page (/lab/features) which runs
+# NOTE: this is SEPARATE from Feature Selection page (/lab/feature-selection) which runs
 # VIF/Spearman/MI/LightGBM on an already-compiled pipeline.
 MAX_ENGINE_A_OUTPUT_COLUMNS = 1000
 ENGINE_A_FAMILY_WINDOW_ROWS = 50_000

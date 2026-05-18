@@ -13,7 +13,7 @@ ENV NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL}
 ENV NEXT_PUBLIC_MLFLOW_URL=${NEXT_PUBLIC_MLFLOW_URL}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN NODE_OPTIONS=--max_old_space_size=1024 npm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app

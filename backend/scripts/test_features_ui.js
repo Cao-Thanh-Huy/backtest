@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
 
   try {
     console.log("\n=== Navigating to Feature Selection page ===");
-    await page.goto('http://localhost:3000/lab/features', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto('http://localhost:3000/lab/feature-selection', { waitUntil: 'domcontentloaded', timeout: 30000 });
     console.log("✓ Page loaded");
 
     // Wait for network to stabilize

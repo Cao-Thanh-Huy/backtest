@@ -12,6 +12,7 @@ from typing import Any, Callable
 import mlflow
 import numpy as np
 import pandas as pd
+from sklearn.pipeline import Pipeline
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import (
     accuracy_score, f1_score, roc_auc_score,
@@ -51,6 +52,16 @@ _REGRESSION_MODELS = {
     "lightgbm": lambda hp: lgb.LGBMRegressor(random_state=42, verbose=-1, **hp),
     "random_forest": lambda hp: RandomForestRegressor(random_state=42, **hp),
 }
+
+def _build_pipeline(model_type: str, hyperparameters: dict[str, Any], task: str) -> Pipeline:
+    model_registry = _CLASSIFICATION_MODELS if task == "classification" else _REGRESSION_MODELS
+    raw_model = model_registry[model_type](hyperparameters)
+    steps = []
+    # In the future, if model_type requires scaling (e.g. NN, Logistic), we can add:
+    # from sklearn.preprocessing import StandardScaler
+    # steps.append(("scaler", StandardScaler()))
+    steps.append(("model", raw_model))
+    return Pipeline(steps)
 
 _DEFAULT_OPTIMIZE_METRIC = {
     "classification": "accuracy_mean",
@@ -209,7 +220,17 @@ def _compute_shap_summary(
         else:
             X_sample = X
 
-        explainer = shap.TreeExplainer(model)
+        # Extract underlying model from Pipeline
+        if hasattr(model, "named_steps") and "model" in model.named_steps:
+            raw_model = model.named_steps["model"]
+            if len(model.steps) > 1:
+                from sklearn.pipeline import Pipeline
+                preprocessor = Pipeline(model.steps[:-1])
+                X_sample = preprocessor.transform(X_sample)
+        else:
+            raw_model = model
+
+        explainer = shap.TreeExplainer(raw_model)
         raw_values = explainer.shap_values(X_sample)
 
         # shap may return list[class] or ndarray; normalize to (n_samples, n_features)
@@ -357,7 +378,7 @@ def tune_hyperparameters_walk_forward(
         folds, aggregate, oos_start_index = _run_walk_forward_cv(
             X=X,
             y=y,
-            model_builder=model_registry[model_type],
+            model_builder=lambda hp: _build_pipeline(model_type, hp, task),
             hyperparameters=params,
             task=task,
             n_splits=n_splits,
@@ -429,7 +450,7 @@ def tune_hyperparameters_walk_forward(
         folds, aggregate, oos_start_index = _run_walk_forward_cv(
             X=X,
             y=y,
-            model_builder=model_registry[model_type],
+            model_builder=lambda hp: _build_pipeline(model_type, hp, task),
             hyperparameters=params,
             task=task,
             n_splits=n_splits,
@@ -501,7 +522,7 @@ def train_walk_forward(
     if model_type not in model_registry:
         raise ValueError(f"Unknown model_type: {model_type!r}. Choose from {list(model_registry)}")
 
-    model_builder = model_registry[model_type]
+    model_builder = lambda hp: _build_pipeline(model_type, hp, task)
 
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
 

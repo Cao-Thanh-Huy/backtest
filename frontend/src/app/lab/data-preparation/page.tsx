@@ -47,9 +47,20 @@ export default function DataPreparationPage() {
   const [createError, setCreateError] = useState<string | null>(null)
   const [selectedPrepId, setSelectedPrepId] = useState<string | null>(null)
   const [previewData, setPreviewData] = useState<PreparationState | null>(null)
-  const [activeTab, setActiveTab] = useState<'overview' | 'data' | 'features'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'data'>('overview')
 
   useEffect(() => () => { mountedRef.current = false }, [])
+
+
+  useEffect(() => {
+    if (!selectedPrepId && dataPreps.length > 0 && !isLoading) {
+      const firstPrep = dataPreps[0];
+      setSelectedPrepId(firstPrep.id);
+      setActiveTab('overview');
+      setTimeout(() => loadPreview(firstPrep.id), 100);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataPreps, isLoading]);
 
   const selectedPrep = selectedPrepId ? dataPreps.find(p => p.id === selectedPrepId) : null
 
@@ -97,7 +108,6 @@ export default function DataPreparationPage() {
         alignment_config: { enabled: true },
         cleaning_config: { enabled: true },
         missing_value_config: { enabled: true },
-        normalization_config: { enabled: true, enable_scaling: true },
       })
       const taskId = res.data.celery_task_id as string
       const prepId = res.data.id as string
@@ -212,34 +222,12 @@ export default function DataPreparationPage() {
     }
   }, [previewData])
 
-  const step6Option = useMemo(() => {
-    const enabled = Boolean((selectedPrep?.normalization_config as Record<string, unknown> | undefined)?.enabled)
-    return {
-      tooltip: { trigger: 'item' },
-      series: [
-        {
-          type: 'pie',
-          radius: ['58%', '78%'],
-          label: { show: true, formatter: '{b}: {d}%' },
-          data: enabled
-            ? [
-                { value: 100, name: 'Normalized', itemStyle: { color: '#22c55e' } },
-                { value: 0, name: 'Remaining', itemStyle: { color: '#334155' } },
-              ]
-            : [
-                { value: 0, name: 'Normalized', itemStyle: { color: '#22c55e' } },
-                { value: 100, name: 'Remaining', itemStyle: { color: '#334155' } },
-              ],
-        },
-      ],
-    }
-  }, [selectedPrep])
 
   const taskBar = activeTaskId ? <TaskBar progress={taskProgress} message={taskMessage} status={taskStatus || "processing"} /> : null
 
   const listPanel = (
     <div className="flex flex-col gap-2 p-4">
-      <button onClick={() => { setDrawerOpen(true); setSelectedPrepId(null) }} className="mb-4 px-4 py-2 bg-violet-600 text-white text-sm rounded-lg hover:bg-violet-700 transition-colors">
+      <button onClick={() => { setDrawerOpen(true); setSelectedPrepId(null) }} className="mb-4 px-4 py-2 bg-violet-600 text-white text-sm rounded-lg hover:bg-violet-700 transition-colors" title="Tạo Chuẩn Bị Dữ Liệu Mới">
         + New Preparation
       </button>
       {dataPreps.length === 0 ? (
@@ -262,25 +250,25 @@ export default function DataPreparationPage() {
           <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setDrawerOpen(false)} />
           <div className="fixed right-0 top-0 bottom-0 w-[500px] bg-zinc-900 border-l border-white/[0.06] z-50 p-6 overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">New Preparation</h2>
+              <h2 className="text-2xl font-bold" title="Tạo Mới">New Preparation</h2>
               <button onClick={() => setDrawerOpen(false)}><X size={24} /></button>
             </div>
             <div className="mb-6">
-              <label className="block text-sm font-semibold mb-2">Feature Factory Source</label>
+              <label className="block text-sm font-semibold mb-2" title="Nguồn từ Feature Factory">Feature Factory Source</label>
               <select value={formPipelineId} onChange={(e) => setFormPipelineId(e.target.value)} className="w-full px-3 py-2 bg-zinc-800 border border-white/[0.10] rounded-lg text-white">
                 <option value="">-- select completed feature pipeline --</option>
                 {completedIndicatorPipelines.map(p => (<option key={p.id} value={p.id}>{p.name ?? p.id} ({(p.feature_columns ?? []).length} generated)</option>))}
               </select>
-              <div className="text-xs text-zinc-400 mt-2">Data Preparation now uses completed output from Feature Factory pipelines.</div>
+              <div className="text-xs text-zinc-400 mt-2" title="Quá trình chuẩn bị dữ liệu giờ đây sử dụng đầu ra từ các pipeline Feature Factory đã hoàn thành.">Data Preparation now uses completed output from Feature Factory pipelines.</div>
             </div>
             <div className="mb-6">
-              <label className="block text-sm font-semibold mb-2">Job Name (optional)</label>
+              <label className="block text-sm font-semibold mb-2" title="Tên tiến trình (tuỳ chọn)">Job Name (optional)</label>
               <input type="text" value={prepName} onChange={(e) => setPrepName(e.target.value)} placeholder="Auto-generated if blank" className="w-full px-3 py-2 bg-zinc-800 border border-white/[0.10] rounded-lg text-white placeholder:text-zinc-600" />
             </div>
             <div className="mb-6 p-3 rounded border border-white/[0.08] bg-zinc-800/40 text-sm text-zinc-200">
-              <div className="font-semibold mb-1">Automatic Production Pipeline</div>
-              <div>Timestamp Alignment → Data Cleaning → Missing Value Handling → Normalization</div>
-              <div className="text-xs text-zinc-400 mt-2">All 4 steps run automatically when you click Start Preparation.</div>
+              <div className="font-semibold mb-1" title="Pipeline Xử Lý Tự Động (Production-ready)">Automatic Production Pipeline</div>
+              <div title="Căn chỉnh thời gian → Làm sạch dữ liệu → Xử lý giá trị thiếu">Timestamp Alignment → Data Cleaning → Missing Value Handling</div>
+              <div className="text-xs text-zinc-400 mt-2" title="Cả 3 bước này sẽ chạy tự động khi bạn bấm Start Preparation.">All 3 steps run automatically when you click Start Preparation.</div>
             </div>
             {createError && (<div className="mb-4 p-3 bg-red-900/30 border border-red-700 rounded text-sm text-red-200">{createError}</div>)}
             <button onClick={handlePrepare} disabled={!formPipelineId || creating} className="w-full px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
@@ -309,27 +297,22 @@ export default function DataPreparationPage() {
                   onClick={() => setActiveTab('overview')}
                   className={`px-3 py-1.5 text-sm rounded-md transition-colors ${activeTab === 'overview' ? 'bg-white/[0.14] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
                 >
-                  Overview
+                  <span title="Tổng Quan">Overview</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('data')}
                   className={`px-3 py-1.5 text-sm rounded-md transition-colors ${activeTab === 'data' ? 'bg-white/[0.14] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
                 >
-                  Prepared Data ({previewData.rows?.length ?? 0} rows, {previewData.columns?.length ?? 0} columns)
+                  <span title="Dữ Liệu Đã Chuẩn Bị">Prepared Data ({previewData.rows?.length ?? 0} rows, {previewData.columns?.length ?? 0} columns)</span>
                 </button>
-                <button
-                  onClick={() => setActiveTab('features')}
-                  className={`px-3 py-1.5 text-sm rounded-md transition-colors ${activeTab === 'features' ? 'bg-white/[0.14] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
-                >
-                  Features
-                </button>
+
               </div>
 
               {activeTab === 'overview' && (
                 <>
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-4">
-                  <h3 className="text-sm font-semibold mb-2">Quality Before</h3>
+                  <h3 className="text-sm font-semibold mb-2" title="Chất Lượng Trước Khi Xử Lý">Quality Before</h3>
                   <div className="space-y-1 text-sm">
                     <p>Rows: <span className="text-orange-300">{previewData.beforeMetrics?.row_count}</span></p>
                     <p>Corrupted: <span className="text-red-400">{previewData.beforeMetrics?.corrupted_rows ?? 0}</span></p>
@@ -337,7 +320,7 @@ export default function DataPreparationPage() {
                   </div>
                 </div>
                 <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-4">
-                  <h3 className="text-sm font-semibold mb-2">Quality After</h3>
+                  <h3 className="text-sm font-semibold mb-2" title="Chất Lượng Sau Khi Xử Lý">Quality After</h3>
                   <div className="space-y-1 text-sm">
                     <p>Rows: <span className="text-green-300">{previewData.afterMetrics?.row_count}</span></p>
                     <p>Corrupted: <span className="text-green-400">{previewData.afterMetrics?.corrupted_rows ?? 0}</span></p>
@@ -348,24 +331,24 @@ export default function DataPreparationPage() {
               {qualitySummary && (
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
                   <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-3">
-                    <div className="text-xs text-zinc-400">Rows Removed</div>
+                    <div className="text-xs text-zinc-400" title="Số Hàng Bị Xoá">Rows Removed</div>
                     <div className="text-lg font-semibold text-zinc-100">{qualitySummary.removedRows}</div>
-                    <div className="text-xs text-zinc-400 mt-1">{qualitySummary.removedPct}% of source rows</div>
+                    <div className="text-xs text-zinc-400 mt-1" title="{qualitySummary.removedPct}% so với dữ liệu gốc">{qualitySummary.removedPct}% of source rows</div>
                   </div>
                   <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-3">
-                    <div className="text-xs text-zinc-400">Null Cells Delta</div>
+                    <div className="text-xs text-zinc-400" title="Thay Đổi Số Ô Trống (NaN)">Null Cells Delta</div>
                     <div className={`text-lg font-semibold ${qualitySummary.nullDelta <= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
                       {qualitySummary.nullDelta > 0 ? '+' : ''}{qualitySummary.nullDelta}
                     </div>
                   </div>
                   <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-3">
-                    <div className="text-xs text-zinc-400">Corrupted Rows Delta</div>
+                    <div className="text-xs text-zinc-400" title="Thay Đổi Số Hàng Bị Lỗi">Corrupted Rows Delta</div>
                     <div className={`text-lg font-semibold ${qualitySummary.corruptedDelta <= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
                       {qualitySummary.corruptedDelta > 0 ? '+' : ''}{qualitySummary.corruptedDelta}
                     </div>
                   </div>
                   <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-3">
-                    <div className="text-xs text-zinc-400">Spikes Delta</div>
+                    <div className="text-xs text-zinc-400" title="Thay Đổi Điểm Giá Đột Biến">Spikes Delta</div>
                     <div className={`text-lg font-semibold ${qualitySummary.spikesDelta <= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
                       {qualitySummary.spikesDelta > 0 ? '+' : ''}{qualitySummary.spikesDelta}
                     </div>
@@ -376,8 +359,8 @@ export default function DataPreparationPage() {
                 {step3Option && (
                   <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-4 h-80">
                     <div className="flex flex-col mb-3">
-                      <h3 className="text-sm font-semibold">Timestamp Alignment</h3>
-                      <p className="text-xs text-zinc-400 mt-1">Remove duplicate timestamps and close gaps</p>
+                      <h3 className="text-sm font-semibold" title="Căn Chỉnh Thời Gian">Timestamp Alignment</h3>
+                      <p className="text-xs text-zinc-400 mt-1" title="Xoá bỏ các mốc thời gian trùng lặp và lấp đầy khoảng trống">Remove duplicate timestamps and close gaps</p>
                     </div>
                     <ReactECharts option={step3Option} style={{ height: 'calc(100% - 40px)' }} />
                   </div>
@@ -385,8 +368,8 @@ export default function DataPreparationPage() {
                 {step4Option && (
                   <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-4 h-80">
                     <div className="flex flex-col mb-3">
-                      <h3 className="text-sm font-semibold">Data Cleaning</h3>
-                      <p className="text-xs text-zinc-400 mt-1">Remove corrupted OHLCV data and extreme price spikes</p>
+                      <h3 className="text-sm font-semibold" title="Làm Sạch Dữ Liệu">Data Cleaning</h3>
+                      <p className="text-xs text-zinc-400 mt-1" title="Xoá bỏ dữ liệu OHLCV bị lỗi và các đợt giá tăng đột biến (spikes)">Remove corrupted OHLCV data and extreme price spikes</p>
                     </div>
                     <ReactECharts option={step4Option} style={{ height: 'calc(100% - 40px)' }} />
                   </div>
@@ -394,25 +377,17 @@ export default function DataPreparationPage() {
                 {step5Option && (
                   <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-4 h-80">
                     <div className="flex flex-col mb-3">
-                      <h3 className="text-sm font-semibold">Missing Value Handling</h3>
-                      <p className="text-xs text-zinc-400 mt-1">Fill NaN values in critical columns and drop incomplete records</p>
+                      <h3 className="text-sm font-semibold" title="Xử Lý Giá Trị Thiếu">Missing Value Handling</h3>
+                      <p className="text-xs text-zinc-400 mt-1" title="Điền giá trị NaN vào các cột quan trọng và loại bỏ bản ghi thiếu">Fill NaN values in critical columns and drop incomplete records</p>
                     </div>
                     <ReactECharts option={step5Option} style={{ height: 'calc(100% - 40px)' }} />
                   </div>
                 )}
-                {step6Option && (
-                  <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-4 h-80">
-                    <div className="flex flex-col mb-3">
-                      <h3 className="text-sm font-semibold">Normalization</h3>
-                      <p className="text-xs text-zinc-400 mt-1">Scale numeric features to standard distribution for model input</p>
-                    </div>
-                    <ReactECharts option={step6Option} style={{ height: 'calc(100% - 40px)' }} />
-                  </div>
-                )}
+
               </div>
               {chartOption && (
                 <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-4 mb-6 h-96">
-                  <h3 className="text-sm font-semibold mb-4">Quality Metrics</h3>
+                  <h3 className="text-sm font-semibold mb-4" title="Các Chỉ Số Chất Lượng">Quality Metrics</h3>
                   <ReactECharts option={chartOption} style={{ height: '100%' }} />
                 </div>
               )}
@@ -426,49 +401,6 @@ export default function DataPreparationPage() {
                 </div>
               )}
 
-              {activeTab === 'features' && previewData?.columns && (
-                <div className="bg-zinc-900 border border-white/[0.06] rounded-lg p-4">
-                  <h3 className="text-sm font-semibold mb-4">Features Scaling Status</h3>
-                  {(() => {
-                    const columns = previewData.columns ?? []
-                    return (
-                  <table className="min-w-full text-xs">
-                    <thead>
-                      <tr>
-                        <th className="text-left py-2 px-2">Column</th>
-                        <th className="text-left py-2 px-2">Type</th>
-                        <th className="text-left py-2 px-2">Scaled Column</th>
-                        <th className="text-left py-2 px-2">Reason</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {columns.map(col => {
-                        if (col.name.endsWith('_scaled')) return null
-
-                        const scaledColumn = columns.find(c => c.name === `${col.name}_scaled`)
-                        const typeLower = col.type.toLowerCase()
-                        const isNumeric = ['float', 'int', 'double', 'decimal', 'long'].some(kind => typeLower.includes(kind))
-                        const reason = scaledColumn ? '' : (isNumeric ? '' : `Non-numeric: ${col.type}`)
-
-                        return (
-                          <tr key={col.name}>
-                            <td className="py-2 px-2 font-mono text-zinc-300">{col.name}</td>
-                            <td className="py-2 px-2 text-zinc-400">{col.type}</td>
-                            <td className={`py-2 px-2 font-mono ${scaledColumn ? 'text-green-400' : 'text-zinc-500'}`}>
-                              {scaledColumn ? scaledColumn.name : ''}
-                            </td>
-                            <td className={`py-2 px-2 ${reason ? 'text-amber-400' : 'text-zinc-500'}`}>
-                              {reason}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                    )
-                  })()}
-                </div>
-              )}
             </>
           )}
         </div>
@@ -476,5 +408,5 @@ export default function DataPreparationPage() {
     </div>
   )
 
-  return <LabPage title="Data Preparation" subtitle="Alignment, Cleaning, Missing Value Handling, and Normalization" list={listPanel} detail={detailPanel} />
+  return <LabPage title="Data Preparation" subtitle="Alignment, Cleaning, and Missing Value Handling" list={listPanel} detail={detailPanel} />
 }

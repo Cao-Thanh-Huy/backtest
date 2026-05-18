@@ -63,6 +63,14 @@ export default function TargetsPage() {
     }
   }, [labeledDatasets, activeLdId])
 
+
+  // Auto-select first completed Data Preparation for the input
+  useEffect(() => {
+    if (!selectedPrepId && completedPreps.length > 0) {
+      setSelectedPrepId(completedPreps[0].id)
+    }
+  }, [completedPreps, selectedPrepId])
+
   // --- Generator state ---
   const [labelType, setLabelType] = useState<'direction' | 'return' | 'triple_barrier'>('return')
   const [horizonsStr, setHorizonsStr] = useState('1, 5, 20')
@@ -151,7 +159,7 @@ export default function TargetsPage() {
         
         {/* LEFT: List of Labeled Datasets */}
         <div className="w-64 flex-shrink-0 space-y-2">
-          <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">Labeled Datasets</div>
+          <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3" title="Các Tập Dữ Liệu Đã Gắn Nhãn">Labeled Datasets</div>
           {labeledDatasets.length === 0 && (
             <div className="text-xs text-zinc-600 italic">No labeled datasets yet</div>
           )}
@@ -181,7 +189,7 @@ export default function TargetsPage() {
           {/* Generator Card */}
           <div className="bg-surface border border-white/[0.06] rounded-xl p-5 shadow-lg">
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+              <h2 className="text-lg font-bold text-zinc-100 flex items-center gap-2" title="Trình Tạo Mục Tiêu (Target)">
                 <span className="bg-brand-500/20 text-brand-400 p-1.5 rounded-md">🎯</span> Target Generator
               </h2>
               {activeLd && (
@@ -189,7 +197,7 @@ export default function TargetsPage() {
                   onClick={() => deleteMutation.mutate(activeLd.id)}
                   className="text-xs text-red-500 hover:text-red-400 flex items-center gap-1 transition-colors"
                 >
-                  <Trash2 className="w-3 h-3" /> Delete Selected
+                  <Trash2 className="w-3 h-3" /> <span title="Xoá Tập Đã Chọn">Delete Selected</span>
                 </button>
               )}
             </div>
@@ -198,7 +206,7 @@ export default function TargetsPage() {
               {/* Left: Input selector */}
               <div className="space-y-4 border-r border-white/5 pr-6">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                  <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider" title="Đầu vào: Dữ liệu đã chuẩn bị">
                     Input: Data Preparation
                   </label>
                   <select
@@ -244,7 +252,7 @@ export default function TargetsPage() {
               {/* Right: Target config */}
               <div className="space-y-5">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">1. Label Type</label>
+                  <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider" title="1. Loại Nhãn">1. Label Type</label>
                   <div className="flex gap-2">
                     {(['return', 'direction', 'triple_barrier'] as const).map(t => (
                       <button
@@ -256,7 +264,7 @@ export default function TargetsPage() {
                             : 'bg-black/30 border-white/5 text-zinc-400 hover:border-white/10'
                         }`}
                       >
-                        {t === 'return' ? 'Future Return' : t === 'direction' ? 'Direction' : 'Triple Barrier'}
+                        {t === 'return' ? <span title="Lợi nhuận tương lai (Hồi quy)">Future Return</span> : t === 'direction' ? <span title="Hướng đi của giá (Phân loại)">Direction</span> : <span title="Phân loại 3 nhãn dựa trên chạm ngưỡng (Triple Barrier)">Triple Barrier</span>}
                       </button>
                     ))}
                   </div>
@@ -265,7 +273,7 @@ export default function TargetsPage() {
                 {labelType === 'triple_barrier' && (
                   <div className="grid grid-cols-3 gap-3 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
                     <div className="space-y-1">
-                      <label className="text-[10px] text-zinc-400 uppercase tracking-wider">Mode</label>
+                      <label className="text-[10px] text-zinc-400 uppercase tracking-wider" title="Chế độ">Mode</label>
                       <select value={tbMode} onChange={e => setTbMode(e.target.value as any)} className="w-full px-2 py-1.5 bg-black border border-white/10 rounded-md text-xs text-zinc-200 outline-none">
                         <option value="atr">ATR</option>
                         <option value="volatility">Volatility</option>
@@ -273,18 +281,18 @@ export default function TargetsPage() {
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] text-zinc-400 uppercase tracking-wider">Take Profit</label>
+                      <label className="text-[10px] text-zinc-400 uppercase tracking-wider" title="Chốt Lời (Take Profit)">Take Profit</label>
                       <input type="text" value={tbTp} onChange={e => setTbTp(e.target.value)} className="w-full px-2 py-1.5 bg-black border border-white/10 rounded-md text-xs text-zinc-200 outline-none" />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] text-zinc-400 uppercase tracking-wider">Stop Loss</label>
+                      <label className="text-[10px] text-zinc-400 uppercase tracking-wider" title="Dừng Lỗ (Stop Loss)">Stop Loss</label>
                       <input type="text" value={tbSl} onChange={e => setTbSl(e.target.value)} className="w-full px-2 py-1.5 bg-black border border-white/10 rounded-md text-xs text-zinc-200 outline-none" />
                     </div>
                   </div>
                 )}
 
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">2. Horizons (Bars)</label>
+                  <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider" title="2. Khung Thời Gian (Số Nến Tương Lai)">2. Horizons (Bars)</label>
                   <div className="flex items-center gap-3">
                     <input
                       type="text"
@@ -302,7 +310,7 @@ export default function TargetsPage() {
                       {isGenerating ? 'Generating...' : `Generate ${horizonsList.length} Targets`}
                     </button>
                   </div>
-                  <div className="text-[10px] text-zinc-500">Comma-separated integers. Each run creates a new independent Labeled Dataset.</div>
+                  <div className="text-[10px] text-zinc-500" title="Các số nguyên phân cách bằng dấu phẩy. Mỗi lần chạy tạo một tập dữ liệu độc lập.">Comma-separated integers. Each run creates a new independent Labeled Dataset.</div>
                 </div>
 
                 {generateMutation.isError && (
@@ -328,7 +336,7 @@ export default function TargetsPage() {
 
           {/* Target Statistics */}
           <div>
-            <h3 className="text-lg font-bold text-zinc-100 mb-4 px-1">Generated Target Statistics</h3>
+            <h3 className="text-lg font-bold text-zinc-100 mb-4 px-1" title="Thống Kê Mục Tiêu Đã Tạo">Generated Target Statistics</h3>
 
             {!activeLd && <EmptyState message="Select a Labeled Dataset from the left to view statistics." />}
             {activeLd && loadingStats && <div className="text-sm text-zinc-500 px-1">Loading statistics...</div>}
@@ -363,14 +371,14 @@ export default function TargetsPage() {
                       </div>
                       <div className="text-right">
                         <div className="text-xs font-semibold text-zinc-300">{(stat.totalRows - stat.nullCount).toLocaleString()} rows</div>
-                        {stat.nullCount > 0 && <div className="text-[10px] text-amber-500 mt-1 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{stat.nullCount} NaN (Look-ahead)</div>}
+                        {stat.nullCount > 0 && <div className="text-[10px] text-amber-500 mt-1 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20"><span title="Giá trị trống do chưa đủ nến tương lai (Look-ahead)">{stat.nullCount} NaN (Look-ahead)</span></div>}
                       </div>
                     </div>
 
                     {stat.type === 'classification' && stat.labelCounts && (
                       <div className="space-y-3">
                         <div className="flex justify-between items-end">
-                          <div className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">Class Distribution</div>
+                          <div className="text-xs text-zinc-500 font-semibold uppercase tracking-wider" title="Phân Bổ Lớp (Class Distribution)">Class Distribution</div>
                           {(() => {
                             const balance = balanceScore(stat.labelCounts)
                             const isBalanced = balance > 0.7
@@ -389,7 +397,7 @@ export default function TargetsPage() {
                               <div key={label}>
                                 <div className="flex justify-between text-[11px] mb-1.5">
                                   <span className="font-mono font-medium text-zinc-300">
-                                    {label === '1' ? 'Long (+1)' : label === '-1' ? 'Short (-1)' : label === '0' ? 'Flat (0)' : label}
+                                    {label === '1' ? <span title="Tăng giá">Long (+1)</span> : label === '-1' ? <span title="Giảm giá">Short (-1)</span> : label === '0' ? <span title="Đi ngang">Flat (0)</span> : label}
                                   </span>
                                   <span className="text-zinc-400 font-mono">{pctVal.toFixed(1)}% ({count})</span>
                                 </div>
@@ -406,16 +414,16 @@ export default function TargetsPage() {
                     {stat.type === 'regression' && (
                       <div className="grid grid-cols-4 gap-2 pt-2">
                         {[
-                          { label: 'Min', value: stat.min, color: 'text-red-400' },
-                          { label: 'Max', value: stat.max, color: 'text-emerald-400' },
-                          { label: 'Mean', value: stat.mean, color: 'text-brand-400' },
-                          { label: 'Std Dev', value: stat.std, color: 'text-zinc-300' },
-                        ].map(({ label, value, color }) => (
+                          { label: 'Min', labelVi: 'Nhỏ Nhất', value: stat.min, color: 'text-red-400' },
+                          { label: 'Max', labelVi: 'Lớn Nhất', value: stat.max, color: 'text-emerald-400' },
+                          { label: 'Mean', labelVi: 'Trung Bình', value: stat.mean, color: 'text-brand-400' },
+                          { label: 'Std Dev', labelVi: 'Độ Lệch Chuẩn', value: stat.std, color: 'text-zinc-300' },
+                        ].map(({ label, labelVi, value, color }) => (
                           <div key={label} className="rounded-lg border border-white/[0.04] bg-black/40 p-2.5 text-center">
                             <div className={`text-sm font-bold font-mono ${color}`}>
                               {value != null ? (Math.abs(value) < 0.01 ? value.toExponential(2) : value.toFixed(4)) : '—'}
                             </div>
-                            <div className="text-[9px] text-zinc-500 mt-1 uppercase tracking-wider">{label}</div>
+                            <div className="text-[9px] text-zinc-500 mt-1 uppercase tracking-wider" title={labelVi}>{label}</div>
                           </div>
                         ))}
                       </div>

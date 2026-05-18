@@ -22,6 +22,8 @@ const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false })
 interface ParamSweep { min: number; max: number; step: number }
 interface IndicatorConfig {
   name: string; enabled: boolean
+  label_vi?: string
+  description_vi?: string
   params: Record<string, number>
   params_sweep: Record<string, ParamSweep>
   useSweep: boolean
@@ -30,65 +32,65 @@ interface IndicatorConfig {
 }
 
 const IND_DEFAULTS: Omit<IndicatorConfig, 'enabled' | 'useSweep'>[] = [
-  { name: 'rsi',    label: 'RSI',          description: 'Relative Strength Index — momentum oscillator',
+  { name: 'rsi',    label: 'RSI',          description: 'Relative Strength Index — momentum oscillator', description_vi: 'Chỉ số Sức mạnh Tương đối — động lượng',
     params: { length: 14 }, params_sweep: { length: { min: 6, max: 30, step: 2 } } },
-  { name: 'ema',    label: 'EMA',          description: 'Exponential Moving Average — trend direction',
+  { name: 'ema',    label: 'EMA',          description: 'Exponential Moving Average — trend direction', description_vi: 'Đường Trung bình Động theo Hàm mũ — hướng xu hướng',
     params: { length: 21 }, params_sweep: { length: { min: 5, max: 200, step: 5 } } },
-  { name: 'ema_distance', label: 'EMA Distance', description: 'Relational trend strength: (EMA_fast - EMA_slow) / close',
+  { name: 'ema_distance', label: 'EMA Distance', description: 'Relational trend strength: (EMA_fast - EMA_slow) / close', description_vi: 'Sức mạnh xu hướng tương quan: (EMA nhanh - EMA chậm) / giá đóng cửa',
     params: { fast: 20, slow: 50 }, params_sweep: { fast: { min: 5, max: 50, step: 5 }, slow: { min: 20, max: 200, step: 10 } } },
-  { name: 'ema_compression', label: 'EMA Compression', description: 'Breakout potential: abs(EMA_fast - EMA_slow) / ATR',
+  { name: 'ema_compression', label: 'EMA Compression', description: 'Breakout potential: abs(EMA_fast - EMA_slow) / ATR', description_vi: 'Tiềm năng phá vỡ (breakout): abs(EMA nhanh - EMA chậm) / ATR',
     params: { fast: 20, slow: 50, atr_length: 14 }, params_sweep: { fast: { min: 5, max: 30, step: 5 }, slow: { min: 20, max: 100, step: 10 } } },
-  { name: 'trend_regime', label: 'Trend Regime', description: 'Regime state: EMA_fast > EMA_slow',
+  { name: 'trend_regime', label: 'Trend Regime', description: 'Regime state: EMA_fast > EMA_slow', description_vi: 'Trạng thái xu hướng: EMA nhanh > EMA chậm',
     params: { fast: 50, slow: 200 }, params_sweep: {} },
-  { name: 'volatility_regime', label: 'Volatility Regime', description: 'High-vol / low-vol state via volatility z-score threshold',
+  { name: 'volatility_regime', label: 'Volatility Regime', description: 'High-vol / low-vol state via volatility z-score threshold', description_vi: 'Biến động cao/thấp theo ngưỡng Z-score',
     params: { length: 20, z_window: 100, threshold: 1 }, params_sweep: { length: { min: 10, max: 50, step: 10 } } },
-  { name: 'sma',    label: 'SMA',          description: 'Simple Moving Average — trend baseline',
+  { name: 'sma',    label: 'SMA',          description: 'Simple Moving Average — trend baseline', description_vi: 'Đường Trung bình Động Đơn giản — đường cơ sở xu hướng',
     params: { length: 50 }, params_sweep: { length: { min: 10, max: 200, step: 10 } } },
-  { name: 'macd',   label: 'MACD',         description: 'Moving Average Convergence Divergence — trend momentum',
+  { name: 'macd',   label: 'MACD',         description: 'Moving Average Convergence Divergence — trend momentum', description_vi: 'Phân kỳ Hội tụ Trung bình Động — động lượng xu hướng',
     params: { fast: 12, slow: 26, signal: 9 }, params_sweep: { fast: { min: 8, max: 16, step: 2 }, slow: { min: 20, max: 32, step: 2 } } },
-  { name: 'roc', label: 'ROC', description: 'Rate of change momentum',
+  { name: 'roc', label: 'ROC', description: 'Rate of change momentum', description_vi: 'Tỷ lệ thay đổi động lượng',
     params: { length: 10 }, params_sweep: { length: { min: 5, max: 50, step: 5 } } },
-  { name: 'bbands', label: 'Bollinger Bands', description: 'Volatility bands around a moving average',
+  { name: 'bbands', label: 'Bollinger Bands', description: 'Volatility bands around a moving average', description_vi: 'Dải băng biến động quanh đường trung bình động',
     params: { length: 20, std: 2.0 }, params_sweep: { length: { min: 10, max: 50, step: 5 }, std: { min: 1.5, max: 3.0, step: 0.5 } } },
-  { name: 'atr',    label: 'ATR',          description: 'Average True Range — volatility measure',
+  { name: 'atr',    label: 'ATR',          description: 'Average True Range — volatility measure', description_vi: 'Khoảng dao động thực tế trung bình — thước đo biến động',
     params: { length: 14 }, params_sweep: { length: { min: 7, max: 28, step: 7 } } },
-  { name: 'returns', label: 'Returns', description: 'Simple returns over n bars',
+  { name: 'returns', label: 'Returns', description: 'Simple returns over n bars', description_vi: 'Lợi nhuận đơn giản trong n cây nến',
     params: { length: 1 }, params_sweep: { length: { min: 1, max: 12, step: 1 } } },
-  { name: 'log_return', label: 'Log Returns', description: 'Log returns for stable statistical modeling',
+  { name: 'log_return', label: 'Log Returns', description: 'Log returns for stable statistical modeling', description_vi: 'Lợi nhuận logarit để mô hình thống kê ổn định hơn',
     params: { length: 1 }, params_sweep: { length: { min: 1, max: 12, step: 1 } } },
-  { name: 'rolling_std', label: 'Rolling Std', description: 'Rolling volatility of returns',
+  { name: 'rolling_std', label: 'Rolling Std', description: 'Rolling volatility of returns', description_vi: 'Độ lệch chuẩn trượt của lợi nhuận',
     params: { length: 20 }, params_sweep: { length: { min: 10, max: 100, step: 10 } } },
-  { name: 'zscore', label: 'Rolling Z-score', description: 'Mean-reversion distance from rolling mean',
+  { name: 'zscore', label: 'Rolling Z-score', description: 'Mean-reversion distance from rolling mean', description_vi: 'Khoảng cách đảo chiều trung bình so với đường trung bình trượt',
     params: { length: 20 }, params_sweep: { length: { min: 10, max: 80, step: 10 } } },
-  { name: 'skew', label: 'Rolling Skewness', description: 'Distribution asymmetry feature',
+  { name: 'skew', label: 'Rolling Skewness', description: 'Distribution asymmetry feature', description_vi: 'Đặc tính bất đối xứng của phân phối',
     params: { length: 50 }, params_sweep: { length: { min: 20, max: 120, step: 10 } } },
-  { name: 'kurtosis', label: 'Rolling Kurtosis', description: 'Tail-risk feature for return distribution',
+  { name: 'kurtosis', label: 'Rolling Kurtosis', description: 'Tail-risk feature for return distribution', description_vi: 'Đặc tính rủi ro đuôi cho phân phối lợi nhuận',
     params: { length: 50 }, params_sweep: { length: { min: 20, max: 120, step: 10 } } },
-  { name: 'autocorr', label: 'Autocorrelation', description: 'Return persistence over rolling window',
+  { name: 'autocorr', label: 'Autocorrelation', description: 'Return persistence over rolling window', description_vi: 'Độ bền vững lợi nhuận qua cửa sổ trượt',
     params: { length: 50, lag: 1 }, params_sweep: { length: { min: 20, max: 120, step: 10 } } },
-  { name: 'stoch',  label: 'Stochastic',   description: 'Stochastic Oscillator — overbought/oversold',
+  { name: 'stoch',  label: 'Stochastic',   description: 'Stochastic Oscillator — overbought/oversold', description_vi: 'Dao động ngẫu nhiên — vùng quá mua/quá bán',
     params: { k: 14, d: 3 }, params_sweep: { k: { min: 5, max: 21, step: 2 } } },
-  { name: 'adx',    label: 'ADX',          description: 'Average Directional Index — trend strength',
+  { name: 'adx',    label: 'ADX',          description: 'Average Directional Index — trend strength', description_vi: 'Chỉ số Hướng Trung bình — độ mạnh xu hướng',
     params: { length: 14 }, params_sweep: { length: { min: 7, max: 28, step: 7 } } },
-  { name: 'vwap', label: 'VWAP', description: 'Volume-weighted average price context',
+  { name: 'vwap', label: 'VWAP', description: 'Volume-weighted average price context', description_vi: 'Giá trung bình gia quyền khối lượng',
     params: { length: 20 }, params_sweep: { length: { min: 10, max: 80, step: 10 } } },
-  { name: 'obv', label: 'OBV', description: 'On-balance volume pressure accumulator',
+  { name: 'obv', label: 'OBV', description: 'On-balance volume pressure accumulator', description_vi: 'Khối lượng cân bằng — áp lực tích luỹ',
     params: {}, params_sweep: {} },
-  { name: 'funding_zscore', label: 'Funding Z-score', description: 'Crowding feature from funding-rate extremes (requires funding data)',
+  { name: 'funding_zscore', label: 'Funding Z-score', description: 'Crowding feature from funding-rate extremes (requires funding data)', description_vi: 'Đặc điểm đám đông từ cực đoan funding rate (cần dữ liệu funding)',
     params: { length: 50 }, params_sweep: { length: { min: 20, max: 200, step: 20 } } },
-  { name: 'oi_change', label: 'OI Change', description: 'Leverage build-up via open-interest changes (requires OI data)',
+  { name: 'oi_change', label: 'OI Change', description: 'Leverage build-up via open-interest changes (requires OI data)', description_vi: 'Sự tích luỹ đòn bẩy thông qua thay đổi OI (cần dữ liệu Open Interest)',
     params: { length: 1 }, params_sweep: { length: { min: 1, max: 24, step: 1 } } },
-  { name: 'oi_momentum', label: 'OI Momentum', description: 'Smoothed momentum of open-interest flow (requires OI data)',
+  { name: 'oi_momentum', label: 'OI Momentum', description: 'Smoothed momentum of open-interest flow (requires OI data)', description_vi: 'Động lượng dòng tiền Open Interest được làm mượt',
     params: { length: 12 }, params_sweep: { length: { min: 4, max: 48, step: 4 } } },
-  { name: 'basis_spread', label: 'Basis Spread', description: 'Futures - spot spread (requires futures/spot prices)',
+  { name: 'basis_spread', label: 'Basis Spread', description: 'Futures - spot spread (requires futures/spot prices)', description_vi: 'Khoảng cách giữa giá tương lai và giao ngay',
     params: {}, params_sweep: {} },
-  { name: 'liquidation_imbalance', label: 'Liquidation Imbalance', description: 'Long-vs-short liquidation pressure (requires liquidation data)',
+  { name: 'liquidation_imbalance', label: 'Liquidation Imbalance', description: 'Long-vs-short liquidation pressure (requires liquidation data)', description_vi: 'Áp lực thanh lý Long/Short',
     params: {}, params_sweep: {} },
-  { name: 'bid_ask_imbalance', label: 'Bid/Ask Imbalance', description: 'Orderbook pressure (requires bid/ask volume)',
+  { name: 'bid_ask_imbalance', label: 'Bid/Ask Imbalance', description: 'Orderbook pressure (requires bid/ask volume)', description_vi: 'Áp lực sổ lệnh (cần volume Bid/Ask)',
     params: {}, params_sweep: {} },
-  { name: 'delta_volume', label: 'Delta Volume', description: 'Aggressive flow: buy volume - sell volume',
+  { name: 'delta_volume', label: 'Delta Volume', description: 'Aggressive flow: buy volume - sell volume', description_vi: 'Dòng tiền chủ động: Khối lượng Mua - Bán',
     params: {}, params_sweep: {} },
-  { name: 'cvd', label: 'CVD', description: 'Cumulative volume delta',
+  { name: 'cvd', label: 'CVD', description: 'Cumulative volume delta', description_vi: 'Khối lượng delta tích luỹ',
     params: {}, params_sweep: {} },
 ]
 
@@ -313,7 +315,7 @@ function issueTimelineOption(q: QualityInsights) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function IndicatorsPage() {
+export default function FeatureFactoryPage() {
   const qc = useQueryClient()
   const {
     activeDatasetId, activePipelineId, setActivePipeline,
@@ -621,7 +623,7 @@ export default function IndicatorsPage() {
         title="Feature Factory"
         subtitle="Generate indicator columns from raw OHLCV — Technical, Statistical, Regime, Futures, Orderflow. Limit: 1,000 columns."
         action={
-          <button onClick={openDrawer} className="btn-primary text-sm px-4 py-2">
+          <button onClick={openDrawer} className="btn-primary text-sm px-4 py-2" title="Tạo Pipeline Mới">
             + New Pipeline
           </button>
         }
@@ -631,7 +633,7 @@ export default function IndicatorsPage() {
             <div className="p-3 space-y-2 border-b border-white/[0.06] shrink-0">
               <input
                 className="input text-xs w-full"
-                placeholder="Search pipeline name…"
+                placeholder="Search pipeline name…" title="Tìm tên pipeline…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
@@ -784,6 +786,7 @@ export default function IndicatorsPage() {
                         <button
                           key={tab}
                           onClick={() => setActiveTab(tab)}
+                          title={tab === 'preview' ? 'Xem Trước' : tab === 'features' ? 'Đặc Trưng' : tab === 'quality' ? 'Chất Lượng' : 'Cấu Hình'}
                           className={`px-4 py-2.5 text-sm transition-colors border-b-2 -mb-px ${
                             activeTab === tab
                               ? 'border-brand-400 text-zinc-100 font-medium'
@@ -854,7 +857,7 @@ export default function IndicatorsPage() {
                       <div className="space-y-5">
                         {/* Feature generators */}
                         <div>
-                          <div className="section-label mb-3">Feature Generators Used</div>
+                          <div className="section-label mb-3" title="Các bộ tạo đặc trưng đã dùng">Feature Generators Used</div>
                           {(selected.indicators_config?.length ?? 0) === 0 ? (
                             <div className="text-xs text-zinc-600 italic">No config recorded (legacy pipeline)</div>
                           ) : (
@@ -882,7 +885,7 @@ export default function IndicatorsPage() {
 
                         {/* Targets */}
                         <div>
-                          <div className="section-label mb-3">Targets</div>
+                          <div className="section-label mb-3" title="Mục Tiêu">Targets</div>
                           {(selected.targets_config?.length ?? 0) === 0 ? (
                             <div className="text-xs text-zinc-600 italic">No config recorded (legacy pipeline)</div>
                           ) : (
@@ -904,7 +907,7 @@ export default function IndicatorsPage() {
 
                         {/* Lags */}
                         <div>
-                          <div className="text-xs font-semibold text-zinc-400 mb-2">Lag Periods</div>
+                          <div className="text-xs font-semibold text-zinc-400 mb-2" title="Các Khoảng Trễ">Lag Periods</div>
                           {(selected.lags?.length ?? 0) === 0 ? (
                             <div className="text-xs text-zinc-600 italic">No lags recorded</div>
                           ) : (
@@ -925,22 +928,22 @@ export default function IndicatorsPage() {
                       <div className="space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                           <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
-                            <div className="section-label mb-2">Duplicate Candles</div>
+                            <div className="section-label mb-2" title="Nến trùng lặp">Duplicate Candles</div>
                             <div className="text-3xl font-bold tabular-nums tracking-tight text-emerald-400">{quality.duplicateCandles.toLocaleString()}</div>
                             <div className="text-[11px] text-zinc-600 mt-1">same timestamp appears multiple times</div>
                           </div>
                           <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
-                            <div className="section-label mb-2">Corrupted Rows</div>
+                            <div className="section-label mb-2" title="Hàng lỗi">Corrupted Rows</div>
                             <div className={`text-3xl font-bold tabular-nums tracking-tight ${quality.corruptedRows > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{quality.corruptedRows.toLocaleString()}</div>
                             <div className="text-[11px] text-zinc-600 mt-1">invalid OHLC / volume values</div>
                           </div>
                           <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
-                            <div className="section-label mb-2">Spikes</div>
+                            <div className="section-label mb-2" title="Biến động đột biến">Spikes</div>
                             <div className={`text-3xl font-bold tabular-nums tracking-tight ${quality.spikes > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>{quality.spikes.toLocaleString()}</div>
                             <div className="text-[11px] text-zinc-600 mt-1">extreme returns outlier candles</div>
                           </div>
                           <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
-                            <div className="section-label mb-2">Missing Candles</div>
+                            <div className="section-label mb-2" title="Thiếu nến">Missing Candles</div>
                             <div className={`text-3xl font-bold tabular-nums tracking-tight ${quality.missingCandles > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{quality.missingCandles.toLocaleString()}</div>
                             <div className="text-[11px] text-zinc-600 mt-1">expected bars not present</div>
                           </div>
@@ -948,22 +951,22 @@ export default function IndicatorsPage() {
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                           <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
-                            <div className="section-label mb-2">Gap Segments</div>
+                            <div className="section-label mb-2" title="Phân đoạn đứt gãy">Gap Segments</div>
                             <div className={`text-3xl font-bold tabular-nums tracking-tight ${quality.gapSegments > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>{quality.gapSegments.toLocaleString()}</div>
                             <div className="text-[11px] text-zinc-600 mt-1">discontinuity segments in time</div>
                           </div>
                           <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
-                            <div className="section-label mb-2">NaN Cells</div>
+                            <div className="section-label mb-2" title="Ô dữ liệu trống (NaN)">NaN Cells</div>
                             <div className={`text-3xl font-bold tabular-nums tracking-tight ${quality.nullCells > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>{quality.nullCells.toLocaleString()}</div>
                             <div className="text-[11px] text-zinc-600 mt-1">sum of null values across columns</div>
                           </div>
                           <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
-                            <div className="section-label mb-2">Rows With NaN (Est.)</div>
+                            <div className="section-label mb-2" title="Số hàng ước tính chứa NaN">Rows With NaN (Est.)</div>
                             <div className="text-3xl font-bold tabular-nums tracking-tight text-amber-400">{quality.nullRowsEstimate.toLocaleString()}</div>
                             <div className="text-[11px] text-zinc-600 mt-1">upper-bound estimate from null profile</div>
                           </div>
                           <div className="rounded-[14px] border border-white/[0.07] p-4" style={{ background: 'linear-gradient(145deg, #131e30 0%, #0e1724 100%)' }}>
-                            <div className="section-label mb-2">Missing Funding</div>
+                            <div className="section-label mb-2" title="Thiếu dữ liệu Funding">Missing Funding</div>
                             <div className={`text-3xl font-bold tabular-nums tracking-tight ${(quality.missingFunding ?? 0) > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>{(quality.missingFunding ?? 0).toLocaleString()}</div>
                             <div className="text-[11px] text-zinc-600 mt-1">null count of funding_rate column</div>
                           </div>
@@ -971,13 +974,13 @@ export default function IndicatorsPage() {
 
                         <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                           <div className="rounded-[14px] border border-white/[0.07] p-3" style={{ background: 'linear-gradient(145deg, #121a29 0%, #0d1420 100%)' }}>
-                            <div className="section-label mb-2">Issue Distribution</div>
+                            <div className="section-label mb-2" title="Phân bổ lỗi">Issue Distribution</div>
                             <div className="h-72">
                               <ReactECharts option={issueOverviewOption(quality)} notMerge lazyUpdate style={{ height: '100%', width: '100%' }} />
                             </div>
                           </div>
                           <div className="rounded-[14px] border border-white/[0.07] p-3" style={{ background: 'linear-gradient(145deg, #121a29 0%, #0d1420 100%)' }}>
-                            <div className="section-label mb-2">Issue Timeline (sampled)</div>
+                            <div className="section-label mb-2" title="Dòng thời gian lỗi">Issue Timeline (sampled)</div>
                             <div className="h-72">
                               <ReactECharts option={issueTimelineOption(quality)} notMerge lazyUpdate style={{ height: '100%', width: '100%' }} />
                             </div>
@@ -1019,13 +1022,13 @@ export default function IndicatorsPage() {
           <div className="fixed inset-0 z-40 bg-black/50" onClick={() => setDrawerOpen(false)} />
           <div className="fixed right-0 top-0 bottom-0 z-50 w-[440px] bg-surface-card border-l border-white/[0.06] overflow-y-auto p-6 space-y-5 shadow-2xl">
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-zinc-100">New Feature Pipeline</h2>
+              <h2 className="font-semibold text-zinc-100" title="Pipeline Đặc Trưng Mới">New Feature Pipeline</h2>
               <button onClick={() => setDrawerOpen(false)} className="text-zinc-500 hover:text-zinc-300 p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors"><X className="w-4 h-4" /></button>
             </div>
 
             {/* Dataset */}
             <div>
-              <label className="label">Input Dataset</label>
+              <label className="label" title="Tập dữ liệu đầu vào">Input Dataset</label>
               <select
                 className="input text-sm"
                 value={formDatasetId}
@@ -1042,7 +1045,7 @@ export default function IndicatorsPage() {
 
             {/* Name */}
             <div>
-              <label className="label">Pipeline Name <span className="text-zinc-600">(optional)</span></label>
+              <label className="label" title="Tên Pipeline (tuỳ chọn)">Pipeline Name <span className="text-zinc-600">(optional)</span></label>
               <input
                 className="input text-sm"
                 value={pipelineName}
@@ -1053,8 +1056,8 @@ export default function IndicatorsPage() {
 
             {/* Indicators */}
             <div>
-              <label className="label mb-2 block">Feature Generators</label>
-              <div className="text-[11px] text-zinc-500 mb-2">
+              <label className="label mb-2 block" title="Các Bộ Tạo Đặc Trưng">Feature Generators</label>
+              <div className="text-[11px] text-zinc-500 mb-2" title="Hỗ trợ kỹ thuật, thống kê, regime, futures và orderflow. Các thông số futures/orderflow chỉ chạy khi có cột gốc tương ứng.">
                 Technical, statistical, regime, futures, and orderflow generators. Futures/orderflow items run only when matching source columns exist.
               </div>
               <div className="space-y-1">
@@ -1092,7 +1095,7 @@ export default function IndicatorsPage() {
                       </div>
                       {ind.enabled && (
                         <>
-                          <div className="text-[10px] text-zinc-600 mt-0.5">{ind.description}</div>
+                          <div className="text-[10px] text-zinc-600 mt-0.5" title={ind.description_vi}>{ind.description}</div>
                           <div className="text-[10px] text-zinc-500 mt-1">
                             ~{(ind.useSweep ? _comboCountFromSweep(ind.params_sweep) : 1) * _indicatorColumnMultiplier(ind.name)}
                             {' '}feature cols from {ind.name.toUpperCase()}
@@ -1151,7 +1154,7 @@ export default function IndicatorsPage() {
             {/* Estimated feature count + server preflight summary */}
             <div className="rounded-lg border border-brand-500/20 bg-brand-500/10 px-3 py-2 space-y-2">
               <div>
-                <div className="text-xs text-zinc-300">Estimated feature columns (local)</div>
+                <div className="text-xs text-zinc-300" title="Ước tính số lượng cột đặc trưng">Estimated feature columns (local)</div>
                 <div className="text-sm text-brand-300 font-semibold">
                   {estimatedTotalFeatures.toLocaleString()} total
                   <span className="text-zinc-500 font-normal"> ({estimatedBaseFeatures.toLocaleString()} base + {(estimatedBaseFeatures * lagList.length).toLocaleString()} lags)</span>
@@ -1159,7 +1162,7 @@ export default function IndicatorsPage() {
               </div>
 
               <div className="border-t border-white/[0.06] pt-2">
-                <div className="text-xs text-zinc-300">Server preflight</div>
+                <div className="text-xs text-zinc-300" title="Kiểm tra tiền trạm từ Server">Server preflight</div>
                 {preflightLoading && (
                   <div className="text-[11px] text-zinc-500 mt-1">Checking resource estimate…</div>
                 )}
@@ -1198,7 +1201,7 @@ export default function IndicatorsPage() {
 
             {/* Lags */}
             <div>
-              <label className="label">Lag Periods <span className="text-zinc-600">(comma-separated, 1–200)</span></label>
+              <label className="label" title="Khoảng Trễ (cách nhau dấu phẩy)">Lag Periods <span className="text-zinc-600">(comma-separated, 1–200)</span></label>
               <input
                 className="input text-sm font-mono"
                 value={lags}

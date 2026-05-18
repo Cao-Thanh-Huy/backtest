@@ -32,7 +32,7 @@ const { chromium } = require('playwright');
 
   try {
     console.log("\n=== Testing Feature Selection Page ===\n");
-    await page.goto('http://localhost:3000/lab/features', { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto('http://localhost:3000/lab/feature-selection', { waitUntil: 'networkidle', timeout: 60000 });
     
     console.log("\n✓ Page loaded successfully");
     

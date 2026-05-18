@@ -515,7 +515,7 @@ const ANALYSIS_TABS: { key: AnalysisTab; label: string; desc: string }[] = [
   { key: 'importance', label: 'Tree Importance',    desc: 'Xếp hạng cuối theo đóng góp trong LightGBM để ra bộ feature final.' },
 ]
 
-export default function FeaturesPage() {
+export default function FeatureSelectionPage() {
   const qc = useQueryClient()
   const { activeLabeledDatasetId, activeFeatureSetId, setActiveFeatureSet, setTaskProgress, clearTask, taskProgress, taskMessage, taskStatus } = useAppStore()
 

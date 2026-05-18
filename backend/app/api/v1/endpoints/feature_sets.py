@@ -35,7 +35,8 @@ def _load_labeled_df(s3_uri: str):
 
 def _analyze_df(df, target_column, task, vif_threshold, corr_threshold, mi_top_k, tree_top_k):
     from workers.engines.selector import analyze_features
-    feature_cols = [c for c in df.columns if c != target_column and not c.startswith("y_")]
+    feature_cols = [c for c in df.columns if c != target_column and not c.startswith("y_") and c != "timestamp"]
+
     if not feature_cols:
         raise ValueError("No candidate feature columns found")
     return analyze_features(
@@ -47,7 +48,8 @@ def _analyze_df(df, target_column, task, vif_threshold, corr_threshold, mi_top_k
 
 def _suggest_df(df, target_column, task, vif_threshold, corr_threshold, mi_top_k, tree_top_k):
     from workers.engines.selector import select_features
-    feature_cols = [c for c in df.columns if c != target_column and not c.startswith("y_")]
+    feature_cols = [c for c in df.columns if c != target_column and not c.startswith("y_") and c != "timestamp"]
+
     if not feature_cols:
         raise ValueError("No candidate feature columns found")
     return select_features(

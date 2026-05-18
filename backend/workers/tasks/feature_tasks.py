@@ -76,6 +76,7 @@ def generate_feature_set_task(self: Task, feature_set_id: str):
         df = pd.read_parquet(io.BytesIO(parquet_bytes))
 
         feature_cols = [c for c in df.columns if c != target_col and not c.startswith("y_") and c != "timestamp"]
+
         if not feature_cols:
             raise ValueError("No candidate feature columns found in dataset")
 
