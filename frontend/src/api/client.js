@@ -95,6 +95,7 @@ export const preflightFeaturePipeline = (data) => request('/v1/pipelines/preflig
 export const generateFeaturePipeline = (data) => request('/v1/pipelines/generate', { method: 'POST', body: JSON.stringify(data) });
 export const getFeaturePipelinePreview = (id, rows = 200) => request(`/v1/pipelines/${id}/preview?rows=${rows}`);
 export const getFeaturePipelineDownload = (id) => request(`/v1/pipelines/${id}/download`);
+export const cancelPipeline = (id) => request(`/v1/pipelines/${id}/cancel`, { method: 'POST' });
 
 export const getPipelineVersions = (id) => request(`/v1/pipelines/${id}/versions`);
 export const getVersionSQL = (id, version) => request(`/v1/pipelines/${id}/versions/${version}/sql`);

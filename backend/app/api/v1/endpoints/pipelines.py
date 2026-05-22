@@ -300,6 +300,36 @@ async def delete_pipeline(pipeline_id: UUID, db: AsyncSession = Depends(get_db))
     await db.commit()
 
 
+@router.post("/{pipeline_id}/cancel", response_model=PipelineRead)
+async def cancel_pipeline(pipeline_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Cancel a pending or running feature generation pipeline and revoke its Celery task."""
+    pipeline = await db.get(FeaturePipeline, pipeline_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    if pipeline.status not in {StatusEnum.pending, StatusEnum.running}:
+        raise HTTPException(
+            status_code=400,
+            detail="Only pending or running pipelines can be canceled"
+        )
+
+    # Revoke Celery task if task_id exists
+    if pipeline.celery_task_id:
+        try:
+            celery_app.control.revoke(pipeline.celery_task_id, terminate=True)
+        except Exception as e:
+            # Log error but proceed to mark it failed in DB
+            print(f"Failed to revoke celery task {pipeline.celery_task_id}: {e}")
+
+    # Mark as failed with "Canceled by user" error
+    pipeline.status = StatusEnum.failed
+    pipeline.error_message = "Canceled by user"
+    
+    await db.commit()
+    await db.refresh(pipeline)
+    return pipeline
+
+
 @router.get("/{pipeline_id}/preview")
 async def preview_pipeline(pipeline_id: UUID, rows: int = 200, db: AsyncSession = Depends(get_db)):
     """Return column schema + first N rows of the processed feature parquet."""

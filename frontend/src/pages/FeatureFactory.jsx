@@ -36,7 +36,7 @@ const S = {
   }),
   card: {
     background: '#0f172a', border: '1px solid #1e293b',
-    borderRadius: 12, overflow: 'visible',
+    borderRadius: 12, overflow: 'hidden',
   },
   table: { width: '100%', borderCollapse: 'collapse', minWidth: 1100 },
   th: {
@@ -159,14 +159,18 @@ const getTimelineSteps = (pipeline) => {
   ]
 }
 
-function StatusBadge({ status, progress, progressMessage, isTable }) {
+function StatusBadge({ status, progress, progressMessage, isTable, errorMessage }) {
   const map = {
     completed: { color: '#10b981', label: 'Completed', icon: <CheckCircle size={11} /> },
     failed: { color: '#ef4444', label: 'Failed', icon: <AlertCircle size={11} /> },
     running: { color: '#3b82f6', label: 'Running', icon: <RefreshCw size={11} className="spin" /> },
     pending: { color: '#fbbf24', label: 'Pending', icon: <Clock size={11} /> },
+    canceled: { color: '#f59e0b', label: 'Canceled', icon: <X size={11} /> }
   }
-  const statusLower = status?.toLowerCase()
+  let statusLower = status?.toLowerCase()
+  if (statusLower === 'failed' && (errorMessage === 'Canceled by user' || progressMessage === 'Canceled by user')) {
+    statusLower = 'canceled'
+  }
   const { color, label, icon } = map[statusLower] || { color: '#94a3b8', label: status || 'Unknown', icon: <Clock size={11} /> }
   const showProgress = statusLower === 'running' && typeof progress === 'number'
 
@@ -259,6 +263,8 @@ export default function FeatureFactory() {
   const [generating, setGenerating] = useState(false)
   const [deletingId, setDeletingId] = useState(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [cancelingId, setCancelingId] = useState(null)
+  const [confirmCancelId, setConfirmCancelId] = useState(null)
   
   // Search & Filter (List view)
   const [searchQuery, setSearchQuery] = useState('')
@@ -529,6 +535,58 @@ export default function FeatureFactory() {
     }
   }
 
+  // Generate sample feature dataset (identical to user's setup)
+  const handleGenerateSample = async () => {
+    if (datasets.length === 0) {
+      showToast('Không tìm thấy nguồn dữ liệu. Vui lòng tạo hoặc nạp thử nghiệm dữ liệu thị trường (Market Intake) trước!', 'error')
+      return
+    }
+
+    setGenerating(true)
+    try {
+      // Find BTCUSDT 1m dataset as standard sample if possible, otherwise any first dataset
+      const sampleDs = datasets.find(d => d.symbol === 'BTCUSDT' && d.timeframe === '1m') || datasets[0]
+      
+      const payload = {
+        dataset_id: sampleDs.id,
+        name: `${sampleDs.symbol}_${sampleDs.timeframe}_rsi_pipeline_sample`,
+        indicators: [
+          {
+            name: 'rsi',
+            params: {
+              include_threshold: true,
+              include_trend: true,
+              include_raw_extras: true,
+              include_multi_zone: true,
+              include_momentum_slope: true,
+              include_divergence: true,
+              include_trend_structure: true,
+              include_statistical: true,
+              include_persistence: true,
+              include_crossovers: true
+            },
+            params_sweep: {
+              length: {
+                min: 2,
+                max: 100,
+                step: 1
+              }
+            }
+          }
+        ],
+        lags: [1]
+      }
+
+      await api.generateFeaturePipeline(payload)
+      showToast('Kích hoạt tiến trình tạo feature mẫu thành công!', 'success')
+      loadAll()
+    } catch (err) {
+      showToast(err.message || 'Failed to generate sample feature pipeline', 'error')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   // Delete Pipeline action
   const handleDeletePipeline = (pipeId, e) => {
     if (e) e.stopPropagation()
@@ -549,6 +607,33 @@ export default function FeatureFactory() {
       showToast(err.message || 'Deletion failed', 'error')
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  // Cancel Pipeline actions
+  const handleCancelPipeline = (pipeId, e) => {
+    if (e) e.stopPropagation()
+    setConfirmCancelId(pipeId)
+  }
+
+  const executeCancel = async () => {
+    const pipeId = confirmCancelId
+    setConfirmCancelId(null)
+    if (!pipeId || cancelingId) return
+    setCancelingId(pipeId)
+    try {
+      await api.cancelPipeline(pipeId)
+      showToast('Đã hủy tiến trình thành công!', 'success')
+      if (selectedPipeline?.id === pipeId) {
+        // Reload detail state if open
+        const updated = await api.getPipeline(pipeId)
+        setPipelines(prev => prev.map(p => p.id === pipeId ? updated : p))
+      }
+      loadAll()
+    } catch (err) {
+      showToast(err.message || 'Hủy tiến trình thất bại', 'error')
+    } finally {
+      setCancelingId(null)
     }
   }
 
@@ -677,6 +762,14 @@ export default function FeatureFactory() {
           </div>
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            {(selectedPipeline.status === 'running' || selectedPipeline.status === 'pending') && (
+              <button
+                onClick={(e) => handleCancelPipeline(selectedPipeline.id, e)}
+                style={{ ...S.btn('secondary'), height: 44, padding: '0 20px', borderRadius: 12, background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', marginRight: 0 }}
+              >
+                <X size={16} /> Cancel Running
+              </button>
+            )}
             <button 
               onClick={() => handleDeletePipeline(selectedPipeline.id)}
               style={{ ...S.btn('danger'), height: 44, padding: '0 20px', borderRadius: 12 }}
@@ -907,7 +1000,7 @@ export default function FeatureFactory() {
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#94a3b8' }}>Pipeline Status:</span>
-                        <StatusBadge status={selectedPipeline.status} progress={selectedPipeline.progress} progressMessage={selectedPipeline.progress_message} />
+                        <StatusBadge status={selectedPipeline.status} progress={selectedPipeline.progress} progressMessage={selectedPipeline.progress_message} errorMessage={selectedPipeline.error_message} />
                       </div>
                     </div>
                   </div>
@@ -1215,6 +1308,54 @@ export default function FeatureFactory() {
           </div>
         </div>
       )}
+      {confirmCancelId && (
+        <div style={S.overlay}>
+          <div style={{
+            background: '#0f172a', border: '1px solid #334155', borderRadius: 16,
+            padding: 24, width: '100%', maxWidth: 420, textAlign: 'center',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+            display: 'flex', flexDirection: 'column', gap: 20,
+          }}>
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%', background: 'rgba(251,191,36,0.1)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto'
+            }}>
+              <AlertCircle size={28} color="#fbbf24" />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#f8fafc', margin: 0 }}>Hủy Tiến Trình Feature</h3>
+              <p style={{ fontSize: 13, color: '#94a3b8', margin: 0, lineHeight: '20px' }}>
+                Bạn có chắc chắn muốn hủy tiến trình sinh feature này không? Hành động này sẽ dừng ngay việc tính toán của Celery worker.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+              <button
+                onClick={() => setConfirmCancelId(null)}
+                style={{
+                  flex: 1, padding: '12px 16px', background: '#1e293b', border: '1px solid #334155',
+                  borderRadius: 10, color: '#cbd5e1', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                  transition: 'background 0.2s', outline: 'none'
+                }}
+              >
+                Quay lại
+              </button>
+              <button
+                onClick={executeCancel}
+                style={{
+                  flex: 1, padding: '12px 16px', background: '#fbbf24', border: 'none',
+                  borderRadius: 10, color: '#0f172a', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                  transition: 'background 0.2s', outline: 'none'
+                }}
+              >
+                Xác nhận Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* Header */}
       <div style={S.header}>
@@ -1247,6 +1388,14 @@ export default function FeatureFactory() {
           </button>
           
           <button
+            style={{ ...S.btn('secondary'), height: 44, padding: '0 24px', borderRadius: 12, background: 'rgba(99,102,241,0.1)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', marginRight: 0 }}
+            onClick={handleGenerateSample}
+            disabled={isLoading || generating}
+          >
+            <Zap size={18} /> Generate Samples
+          </button>
+          
+          <button
             style={{ ...S.btn('primary'), height: 44, padding: '0 24px', borderRadius: 12 }}
             onClick={() => setDrawerOpen(true)}
           >
@@ -1265,11 +1414,7 @@ export default function FeatureFactory() {
 
       {/* Main Table Card */}
       <div style={S.card}>
-        {/* Table Header and tools */}
-        <div style={{ padding: '20px 24px', borderBottom: '1px solid #1e293b', background: '#0a0f1e', borderTopLeftRadius: 12, borderTopRightRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: '#cbd5e1' }}>Created Feature Datasets</div>
-          <div style={{ fontSize: 12, color: '#64748b' }}>Showing {filteredPipelines.length} / {pipelines.length} results</div>
-        </div>
+
 
         {/* Real Table */}
         <div style={{ overflowX: 'auto' }}>
@@ -1340,7 +1485,7 @@ export default function FeatureFactory() {
                         </span>
                       </td>
                       <td style={{ ...S.td, textAlign: 'center' }}>
-                        <StatusBadge status={p.status} progress={p.progress} progressMessage={p.progress_message} isTable={true} />
+                        <StatusBadge status={p.status} progress={p.progress} progressMessage={p.progress_message} isTable={true} errorMessage={p.error_message} />
                       </td>
                       <td style={{ ...S.td, textAlign: 'center', fontFamily: 'monospace', color: '#10b981', fontWeight: 700, fontSize: 14 }}>
                         {p.status === 'completed' ? (p.feature_columns?.length || 0).toLocaleString() : '—'}
@@ -1350,6 +1495,15 @@ export default function FeatureFactory() {
                       </td>
                       <td style={{ ...S.td, textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                          {(p.status === 'running' || p.status === 'pending') && (
+                            <button
+                              onClick={(e) => handleCancelPipeline(p.id, e)}
+                              style={{ ...S.btn('ghost'), padding: 8, borderRadius: 8 }}
+                              title="Cancel Pipeline Run"
+                            >
+                              <X size={14} color="#fbbf24" />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
