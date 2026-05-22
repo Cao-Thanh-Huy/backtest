@@ -4,6 +4,7 @@
  * Left: library list. Right: detail / preview.
  */
 import { ReactNode } from 'react'
+import { X } from 'lucide-react'
 
 interface Props {
   title: string
@@ -77,28 +78,31 @@ export function PreviewTable({
   columns: { name: string; type: string }[]
   rows: Record<string, unknown>[]
 }) {
-  if (!columns.length) return <div className="text-xs text-zinc-600">No data</div>
+  if (!columns.length) return <div className="text-xs text-zinc-600 text-center py-8">No preview data available</div>
   return (
-    <div className="overflow-auto max-h-[500px] rounded-[12px] border border-white/[0.06] text-xs">
-      <table className="min-w-max w-full">
-        <thead className="sticky top-0" style={{ background: '#111928' }}>
+    <div className="overflow-auto max-h-[480px] rounded-xl border border-white/[0.04] bg-slate-950/20 text-xs">
+      <table className="min-w-max w-full border-collapse">
+        <thead className="sticky top-0 z-10 bg-slate-900/90 backdrop-blur-md">
           <tr>
             {columns.map((c) => (
               <th
                 key={c.name}
-                className="px-3 py-2.5 text-left font-medium border-b border-white/[0.06] whitespace-nowrap"
+                className="px-4 py-3 text-left font-semibold border-b border-white/[0.05] whitespace-nowrap"
               >
-                <div className="text-zinc-200 font-semibold">{c.name}</div>
-                <div className="text-zinc-600 font-mono text-[10px] mt-0.5">{c.type}</div>
+                <div className="text-zinc-200 font-semibold tracking-wide">{c.name}</div>
+                <div className="text-zinc-500 font-mono text-[9px] font-medium mt-0.5 uppercase tracking-wider">{c.type}</div>
               </th>
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-white/[0.02]">
           {rows.map((row, ri) => (
-            <tr key={ri} className={ri % 2 === 0 ? 'bg-surface/50' : 'bg-surface-card/20'}>
+            <tr 
+              key={ri} 
+              className="hover:bg-white/[0.015] transition-colors duration-150 bg-slate-900/10"
+            >
               {columns.map((c) => (
-                <td key={c.name} className="px-3 py-1.5 text-zinc-300 whitespace-nowrap font-mono tabular-nums">
+                <td key={c.name} className="px-4 py-2 text-zinc-300 whitespace-nowrap font-mono tabular-nums tracking-tight">
                   {String(row[c.name] ?? '')}
                 </td>
               ))}
@@ -115,20 +119,33 @@ export function TaskBar({
   progress,
   message,
   status,
+  onDismiss,
 }: {
   progress: number
   message: string
   status: string
+  onDismiss?: () => void
 }) {
   const isActive = status === 'PROGRESS' || status === 'STARTED'
   const isFail = status === 'FAILURE'
   return (
-    <div className="rounded-[14px] border border-white/[0.07] p-4 space-y-2.5"
+    <div className="rounded-[14px] border border-white/[0.07] p-4 space-y-2.5 relative overflow-hidden"
       style={{ background: 'linear-gradient(135deg, #131e30 0%, #0e1724 100%)' }}
     >
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium text-zinc-200">{message || 'Processing...'}</div>
-        <div className="text-xs text-zinc-500 num">{progress}%</div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-zinc-500 num">{progress}%</div>
+          {onDismiss && (
+            <button
+              onClick={onDismiss}
+              className="text-zinc-500 hover:text-zinc-300 p-0.5 rounded hover:bg-white/[0.05] transition-all"
+              title="Dismiss status bar"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
         <div

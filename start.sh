@@ -16,7 +16,7 @@ fi
 
 # Build and start the containers in detached mode
 echo "Building and starting Docker containers..."
-docker compose up --build -d
+docker compose up --build -d --pull missing
 
 echo "========================================"
 echo "Platform started successfully!"

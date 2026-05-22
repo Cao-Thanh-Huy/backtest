@@ -89,6 +89,8 @@ export interface TaskWSHooks {
   onClose?: (ev: CloseEvent) => void
 }
 
+export const getTaskStatus = (taskId: string) => api.get<TaskProgress>(`/ws/task/${taskId}`)
+
 export function connectTaskWS(
   taskId: string,
   onMessage: (data: TaskProgress) => void,

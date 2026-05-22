@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listDatasets, fetchMarketData, previewDataset,
   getDatasetStats, getDatasetChartData, getDatasetDownloadUrl,
-  deleteDataset, connectTaskWS,
+  deleteDataset, connectTaskWS, getTaskStatus,
 } from '@/lib/api'
 import type { TaskProgress } from '@/lib/api'
 import { useAppStore } from '@/store/appStore'
@@ -18,7 +18,8 @@ import { toast } from 'sonner'
 import { getApiErrorMessage } from '@/lib/api-error'
 import {
   ClipboardList, X, Download, Trash2, RefreshCw, Bitcoin,
-  CheckCircle2, AlertTriangle, ChevronDown, ChevronUp,
+  CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, Zap,
+  AlertCircle, Database, Activity,
 } from 'lucide-react'
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false })
@@ -448,6 +449,7 @@ export default function BTCIntakePage() {
   const {
     activeDatasetId, setActiveDataset,
     setTaskProgress, taskProgress, taskMessage, taskStatus, activeTaskId,
+    clearTask,
   } = useAppStore()
 
   const { data: datasets = [], isLoading } = useQuery<Dataset[]>({
@@ -482,11 +484,16 @@ export default function BTCIntakePage() {
   const [statsLoading, setStatsLoading] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
+  const dismissFnRef = useRef<(() => void) | null>(null)
   const mountedRef = useRef(true)
 
   useEffect(() => {
     mountedRef.current = true
-    return () => { mountedRef.current = false; wsRef.current?.close() }
+    return () => {
+      mountedRef.current = false
+      wsRef.current?.close()
+      dismissFnRef.current?.()
+    }
   }, [])
 
   const filteredDatasets = useMemo(() => {
@@ -552,6 +559,89 @@ export default function BTCIntakePage() {
     onError: (e) => toast.error(getApiErrorMessage(e, 'Delete failed')),
   })
 
+  function monitorTaskProgress(
+    task_id: string,
+    onSuccess: (dataset_id: string) => void,
+    onFailure: (errorMsg: string) => void,
+    onCleanup: () => void,
+  ) {
+    let isFinished = false
+    let pollInterval: any = null
+
+    const stopMonitoring = () => {
+      isFinished = true
+      if (pollInterval) {
+        clearInterval(pollInterval)
+        pollInterval = null
+      }
+      wsRef.current?.close()
+      onCleanup()
+    }
+
+    const handleSuccess = (datasetId: string) => {
+      if (isFinished) return
+      onSuccess(datasetId)
+      stopMonitoring()
+    }
+
+    const handleFailure = (error: string) => {
+      if (isFinished) return
+      onFailure(error)
+      stopMonitoring()
+    }
+
+    // Connect WebSocket
+    wsRef.current?.close()
+    wsRef.current = connectTaskWS(
+      task_id,
+      (data: TaskProgress) => {
+        if (!mountedRef.current || isFinished) return
+        setTaskProgress(data.task_id, data.progress, data.message, data.status, data.step, data.sub as Record<string, unknown>)
+        if (data.status === 'SUCCESS' && data.result) {
+          const result = data.result as { dataset_id: string }
+          handleSuccess(result.dataset_id)
+        } else if (data.status === 'FAILURE') {
+          handleFailure(data.error || 'Task failed')
+        }
+      },
+      undefined,
+      {
+        onError: (msg) => {
+          if (isFinished) return
+          console.warn('WS Error, falling back to HTTP Polling:', msg)
+          startPolling()
+        }
+      }
+    )
+
+    const startPolling = () => {
+      if (pollInterval || isFinished) return
+      wsRef.current?.close() // Close WS if we fallback to polling
+      
+      pollInterval = setInterval(async () => {
+        if (isFinished) return
+        try {
+          const response = await getTaskStatus(task_id)
+          const data = response.data
+          if (!mountedRef.current || isFinished) return
+
+          setTaskProgress(data.task_id, data.progress, data.message, data.status, data.step, data.sub as Record<string, unknown>)
+          
+          if (data.status === 'SUCCESS' && data.result) {
+            const result = data.result as { dataset_id: string }
+            handleSuccess(result.dataset_id)
+          } else if (data.status === 'FAILURE') {
+            handleFailure(data.error || 'Task failed')
+          }
+        } catch (err) {
+          console.error('Polling error:', err)
+        }
+      }, 2000)
+    }
+
+    return stopMonitoring
+  }
+
   async function handleFetch() {
     if (!symbol.trim()) { setFetchError('Please enter a Symbol'); return }
     if (dateFrom >= dateTo) { setFetchError('"From" must be before "To"'); return }
@@ -569,28 +659,67 @@ export default function BTCIntakePage() {
       setTaskProgress(task_id, 5, 'Starting market data fetch...', 'PROGRESS', 'Fetching')
       setDrawerOpen(false)
 
-      wsRef.current?.close()
-      wsRef.current = connectTaskWS(
+      const dismissProgress = monitorTaskProgress(
         task_id,
-        (data: TaskProgress) => {
-          if (!mountedRef.current) return
-          setTaskProgress(data.task_id, data.progress, data.message, data.status, data.step, data.sub as Record<string, unknown>)
-          if (data.status === 'SUCCESS' && data.result) {
-            const result = data.result as { dataset_id: string }
-            setActiveDataset(result.dataset_id)
-            qc.invalidateQueries({ queryKey: ['datasets'] })
-            toast.success('Fetched ' + symbol + ' ' + timeframe)
-            setFetching(false)
-          } else if (data.status === 'FAILURE') {
-            toast.error(data.error || 'Fetch failed')
-            setFetching(false)
-          }
+        (dataset_id) => {
+          setActiveDataset(dataset_id)
+          qc.invalidateQueries({ queryKey: ['datasets'] })
+          toast.success('Fetched ' + symbol + ' ' + timeframe)
         },
-        undefined,
-        { onError: (msg) => { toast.error(msg); setFetching(false) } }
+        (errorMsg) => {
+          toast.error(errorMsg || 'Fetch failed')
+        },
+        () => {
+          setFetching(false)
+        }
       )
+
+      dismissFnRef.current = dismissProgress
     } catch (e) {
       setFetchError(getApiErrorMessage(e, 'Fetch failed'))
+      setFetching(false)
+    }
+  }
+
+  async function handleFetchSample() {
+    setFetching(true)
+    setFetchError(null)
+    
+    const now = new Date()
+    const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate())
+    const dateFromStr = oneMonthAgo.toISOString().slice(0, 10)
+    const dateToStr = now.toISOString().slice(0, 10)
+
+    try {
+      const res = await fetchMarketData({
+        source: 'binance',
+        symbol: 'BTCUSDT',
+        timeframe: '1m',
+        date_from: dateFromStr,
+        date_to: dateToStr,
+        enrich_columns: DEFAULT_ENRICHMENTS,
+      })
+      const { task_id } = res.data
+      setTaskProgress(task_id, 5, 'Starting sample data fetch...', 'PROGRESS', 'Fetching')
+
+      const dismissProgress = monitorTaskProgress(
+        task_id,
+        (dataset_id) => {
+          setActiveDataset(dataset_id)
+          qc.invalidateQueries({ queryKey: ['datasets'] })
+          toast.success('Sample data loaded!')
+        },
+        (errorMsg) => {
+          toast.error(errorMsg || 'Fetch sample failed')
+        },
+        () => {
+          setFetching(false)
+        }
+      )
+
+      dismissFnRef.current = dismissProgress
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Fetch sample failed'))
       setFetching(false)
     }
   }
@@ -619,10 +748,27 @@ export default function BTCIntakePage() {
         subtitle="Fetch comprehensive training data — historical load with enrichment columns"
         icon={<ClipboardList className="w-5 h-5" />}
         action={
-          <button onClick={() => setDrawerOpen(true)} className="btn-cta" title="Tải Dữ Liệu Thị Trường">
-            <Bitcoin className="w-3.5 h-3.5" />
-            Fetch Market Data
-          </button>
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={handleFetchSample}
+              disabled={isFetching}
+              className="relative group overflow-hidden px-3.5 py-1.5 text-xs font-semibold rounded-xl border border-violet-500/30 hover:border-violet-400 bg-violet-950/20 hover:bg-violet-900/30 text-violet-300 hover:text-violet-200 transition-all duration-300 shadow-[0_0_15px_rgba(139,92,246,0.05)] hover:shadow-[0_0_20px_rgba(139,92,246,0.15)] backdrop-blur-md flex items-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
+              title="Tải Dữ Liệu Mẫu BTCUSDT 1m (1 Tháng Gần Nhất)"
+            >
+              <Zap className="w-3.5 h-3.5 animate-pulse text-violet-400" />
+              <span>Sample Data</span>
+            </button>
+
+            <button
+              onClick={() => setDrawerOpen(true)}
+              disabled={isFetching}
+              className="btn-cta disabled:opacity-40 disabled:pointer-events-none"
+              title="Tải Dữ Liệu Thị Trường"
+            >
+              <Bitcoin className="w-3.5 h-3.5" />
+              Fetch Market Data
+            </button>
+          </div>
         }
 
         list={
@@ -687,7 +833,17 @@ export default function BTCIntakePage() {
 
         detail={
           <div className="space-y-5">
-            {isFetching && <TaskBar progress={taskProgress} message={taskMessage} status={taskStatus} />}
+            {isFetching && (
+              <TaskBar
+                progress={taskProgress}
+                message={taskMessage}
+                status={taskStatus}
+                onDismiss={() => {
+                  dismissFnRef.current?.()
+                  clearTask()
+                }}
+              />
+            )}
 
             {selected ? (
               <>
@@ -752,44 +908,102 @@ export default function BTCIntakePage() {
                 </div>
 
                 {activeTab === 'chart' && (
-                  chartLoading
-                    ? <div className="h-80 flex items-center justify-center text-xs text-zinc-600">Loading chart...</div>
-                    : chartData && chartData.length > 0
-                      ? <OHLCVChart data={chartData} height={360} />
-                      : <div className="h-80 flex items-center justify-center text-xs text-zinc-600">No OHLCV data available</div>
+                  chartLoading ? (
+                    <div className="h-80 flex flex-col items-center justify-center space-y-3 rounded-2xl border border-white/[0.04] bg-slate-900/30 backdrop-blur-md">
+                      <div className="w-8 h-8 rounded-full border-2 border-violet-500/20 border-t-violet-500 animate-spin" />
+                      <span className="text-[10px] font-semibold text-zinc-500 tracking-wider">LOADING MARKET CHART DATA...</span>
+                    </div>
+                  ) : chartData && chartData.length > 0 ? (
+                    <div className="rounded-2xl border border-white/[0.04] p-5 bg-slate-900/30 backdrop-blur-md shadow-[inset_0_0_20px_rgba(255,255,255,0.015)]">
+                      <div className="flex items-center justify-between gap-2 mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-5 h-5 rounded-lg flex items-center justify-center bg-violet-500/10 text-violet-400">
+                            <Activity className="w-3.5 h-3.5 animate-pulse" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">OHLCV Candle Chart</span>
+                        </div>
+                        <span className="text-[10px] text-zinc-500 font-mono">Total {chartData.length.toLocaleString()} points</span>
+                      </div>
+                      <OHLCVChart data={chartData} height={360} />
+                    </div>
+                  ) : (
+                    <div className="h-80 flex flex-col items-center justify-center space-y-2 rounded-2xl border border-white/[0.04] bg-slate-900/20 backdrop-blur-md">
+                      <AlertCircle className="w-6 h-6 text-zinc-600" />
+                      <span className="text-xs text-zinc-500 font-medium">No OHLCV data available</span>
+                    </div>
+                  )
                 )}
 
                 {activeTab === 'preview' && (
-                  <div className="space-y-3">
-                    {previewLoading && <div className="text-xs text-zinc-600">Loading preview...</div>}
+                  <div className="space-y-4">
+                    {previewLoading && (
+                      <div className="h-80 flex flex-col items-center justify-center space-y-3 rounded-2xl border border-white/[0.04] bg-slate-900/30 backdrop-blur-md">
+                        <div className="w-8 h-8 rounded-full border-2 border-violet-500/20 border-t-violet-500 animate-spin" />
+                        <span className="text-[10px] font-semibold text-zinc-500 tracking-wider">LOADING RAW DATA PREVIEW...</span>
+                      </div>
+                    )}
                     {preview && (
                       <>
-                        <div className="flex gap-4 text-xs text-zinc-500 items-center flex-wrap">
-                          <span><span className="text-zinc-200 font-semibold">{preview.row_count.toLocaleString()}</span> rows</span>
-                          <span><span className="text-zinc-200 font-semibold">{preview.column_count}</span> columns</span>
-                          <div className="flex flex-wrap gap-1">
-                            {preview.columns.slice(0, 14).map(c => (
-                              <span key={c.name} className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.06] text-zinc-500 font-mono">
-                                {c.name}
+                        <div className="rounded-2xl border border-white/[0.04] p-5 bg-slate-900/30 backdrop-blur-md space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/[0.04]">
+                            <div className="flex items-center gap-2">
+                              <div className="w-5 h-5 rounded-lg flex items-center justify-center bg-violet-500/10 text-violet-400">
+                                <Database className="w-3.5 h-3.5" />
+                              </div>
+                              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Dataset Raw Preview</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-zinc-500 font-semibold flex-wrap">
+                              <span className="bg-emerald-500/10 text-emerald-400 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                                {preview.row_count.toLocaleString()} rows
                               </span>
-                            ))}
-                            {preview.column_count > 14 && (
-                              <span className="text-[10px] text-zinc-600">+{preview.column_count - 14} more</span>
-                            )}
+                              <span className="bg-cyan-500/10 text-cyan-400 px-2.5 py-0.5 rounded-full border border-cyan-500/20">
+                                {preview.column_count} columns
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">Schema Fields</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {preview.columns.slice(0, 14).map(c => {
+                                const isNumeric = c.type.toLowerCase().includes('float') || c.type.toLowerCase().includes('int')
+                                const isTime = c.type.toLowerCase().includes('date') || c.type.toLowerCase().includes('time')
+                                const dotColor = isNumeric ? 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.4)]' : isTime ? 'bg-violet-400 shadow-[0_0_6px_rgba(167,139,250,0.4)]' : 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.4)]'
+                                return (
+                                  <span key={c.name} className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-0.5 rounded-full bg-white/[0.02] border border-white/[0.05] text-zinc-400 hover:border-zinc-700/50 hover:text-zinc-300 transition-all font-mono">
+                                    <span className={`w-1 h-1 rounded-full ${dotColor}`} />
+                                    {c.name} <span className="text-[8px] text-zinc-600 font-semibold uppercase">{c.type}</span>
+                                  </span>
+                                )
+                              })}
+                              {preview.column_count > 14 && (
+                                <span className="inline-flex items-center text-[10px] text-zinc-600 font-semibold px-2 py-0.5">
+                                  +{preview.column_count - 14} more fields
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                        <PreviewTable columns={preview.columns} rows={preview.rows} />
+
+                        <div className="rounded-2xl border border-white/[0.04] p-4 bg-slate-900/30 backdrop-blur-md">
+                          <PreviewTable columns={preview.columns} rows={preview.rows} />
+                        </div>
                       </>
                     )}
                   </div>
                 )}
 
                 {activeTab === 'stats' && (
-                  <div className="space-y-5">
-                    {statsLoading && <div className="text-xs text-zinc-600">Loading statistics...</div>}
+                  <div className="space-y-4">
+                    {statsLoading && (
+                      <div className="h-80 flex flex-col items-center justify-center space-y-3 rounded-2xl border border-white/[0.04] bg-slate-900/30 backdrop-blur-md">
+                        <div className="w-8 h-8 rounded-full border-2 border-violet-500/20 border-t-violet-500 animate-spin" />
+                        <span className="text-[10px] font-semibold text-zinc-500 tracking-wider">LOADING DATA STATISTICS...</span>
+                      </div>
+                    )}
                     {stats && (
                       <>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
                           <StatCard
                             label="Coverage" title="Độ Phủ Sóng"
                             value={stats.coverage_pct.toFixed(1) + '%'}
@@ -807,62 +1021,87 @@ export default function BTCIntakePage() {
                         </div>
 
                         {stats.price_range && (
-                          <div className="card p-4">
-                            <div className="section-label mb-3" title="Tóm Tắt Giá & Khối Lượng">Price & Volume Summary</div>
-                            <div className="flex gap-8 text-sm flex-wrap">
-                              <div>
-                                <div className="text-[10px] text-zinc-600 mb-0.5">Close Low</div>
-                                <div className="text-zinc-200 font-mono font-semibold">${stats.price_range.min.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                          <div className="rounded-2xl border border-white/[0.04] p-5 bg-slate-900/30 backdrop-blur-md shadow-[inset_0_0_20px_rgba(255,255,255,0.015)]">
+                            <div className="flex items-center gap-2 mb-4">
+                              <div className="w-5 h-5 rounded-lg flex items-center justify-center bg-violet-500/10 text-violet-400">
+                                <Bitcoin className="w-3.5 h-3.5" />
                               </div>
-                              <div>
-                                <div className="text-[10px] text-zinc-600 mb-0.5">Close High</div>
-                                <div className="text-zinc-200 font-mono font-semibold">${stats.price_range.max.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Price & Volume Summary</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-6">
+                              <div className="space-y-1">
+                                <div className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Close Low</div>
+                                <div className="text-xl font-extrabold text-emerald-400 font-mono tracking-tight">
+                                  ${stats.price_range.min.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <div className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Close High</div>
+                                <div className="text-xl font-extrabold text-cyan-400 font-mono tracking-tight">
+                                  ${stats.price_range.max.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
                               </div>
                               {stats.volume_avg != null && (
-                                <div>
-                                  <div className="text-[10px] text-zinc-600 mb-0.5">Avg Volume / bar</div>
-                                  <div className="text-zinc-200 font-mono font-semibold">{stats.volume_avg.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                                <div className="space-y-1">
+                                  <div className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Avg Volume / bar</div>
+                                  <div className="text-xl font-extrabold text-violet-400 font-mono tracking-tight">
+                                    {stats.volume_avg.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                                  </div>
                                 </div>
                               )}
                             </div>
                           </div>
                         )}
 
-                        {Object.keys(stats.null_counts).length > 0 && (
-                          <div className="card p-4">
-                            <div className="section-label mb-1">Null coverage per column</div>
-                            <div className="text-[11px] text-zinc-600 mb-3">Lower is better. Green = 0% null.</div>
-                            <ReactECharts option={nullCoverageOption(stats)} style={{ height: 200 }} />
-                            <div className="flex gap-3 mt-2 text-[10px] text-zinc-600 flex-wrap">
-                              {[['#22c55e', '0%'], ['#06b6d4', '<5%'], ['#f59e0b', '5-20%'], ['#ef4444', '>20%']].map(([c, l]) => (
-                                <div key={l} className="flex items-center gap-1">
-                                  <div className="w-2.5 h-2.5 rounded-sm" style={{ background: c }} />
-                                  {l}
-                                </div>
-                              ))}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {Object.keys(stats.null_counts).length > 0 && (
+                            <div className="rounded-2xl border border-white/[0.04] p-5 bg-slate-900/30 backdrop-blur-md">
+                              <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Null coverage per column</div>
+                              <div className="text-[10px] text-zinc-500 mb-3">Lower is better. Green = 0% null values.</div>
+                              <ReactECharts option={nullCoverageOption(stats)} style={{ height: 220 }} />
+                              <div className="flex gap-3 mt-3 text-[10px] text-zinc-500 flex-wrap">
+                                {[
+                                  ['#22c55e', '0% null'],
+                                  ['#06b6d4', '<5% null'],
+                                  ['#f59e0b', '5-20% null'],
+                                  ['#ef4444', '>20% null']
+                                ].map(([c, l]) => (
+                                  <div key={l} className="flex items-center gap-1.5">
+                                    <div className="w-2.5 h-2.5 rounded-sm shadow-sm" style={{ background: c }} />
+                                    <span className="font-semibold">{l}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
 
-                        {preview && preview.columns.length > 0 && (
-                          <div className="card p-4">
-                            <div className="section-label mb-3">Column type distribution</div>
-                            <ReactECharts option={columnTypePieOption(preview.columns)} style={{ height: 160 }} />
-                          </div>
-                        )}
+                          {preview && preview.columns.length > 0 && (
+                            <div className="rounded-2xl border border-white/[0.04] p-5 bg-slate-900/30 backdrop-blur-md flex flex-col justify-between">
+                              <div>
+                                <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Column type distribution</div>
+                                <div className="text-[10px] text-zinc-500 mb-3">Categorization of fields in schema dataset</div>
+                              </div>
+                              <div className="flex-1 flex items-center justify-center min-h-[220px]">
+                                <ReactECharts option={columnTypePieOption(preview.columns)} style={{ height: 200, width: '100%' }} />
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </>
                     )}
                   </div>
                 )}
 
                 {activeTab === 'quality' && (
-                  <div className="space-y-5">
+                  <div className="space-y-4">
                     {!quality && (
-                      <div className="text-xs text-zinc-600">Load chart and stats data to analyze quality.</div>
+                      <div className="h-60 flex items-center justify-center text-xs text-zinc-500 bg-slate-900/20 border border-white/[0.04] rounded-2xl backdrop-blur-sm">
+                        Load chart and stats data to analyze quality.
+                      </div>
                     )}
                     {quality && (
                       <>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
                           <StatCard
                             label="Duplicate Candles" title="Nến Trùng Lặp"
                             value={quality.duplicateCandles.toLocaleString()}
@@ -889,7 +1128,7 @@ export default function BTCIntakePage() {
                           />
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
                           <StatCard
                             label="Gap Segments" title="Đoạn Lỗ Hổng"
                             value={quality.gapSegments.toLocaleString()}
@@ -916,34 +1155,38 @@ export default function BTCIntakePage() {
                           />
                         </div>
 
-                        <div className="card p-4">
-                          <div className="section-label mb-1">Issue Breakdown</div>
-                          <div className="text-[11px] text-zinc-600 mb-3">Counts by anomaly type for the selected dataset</div>
-                          <ReactECharts option={issueOverviewOption(quality)} style={{ height: 230 }} />
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <div className="rounded-2xl border border-white/[0.04] p-5 bg-slate-900/30 backdrop-blur-md">
+                            <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Issue Breakdown</div>
+                            <div className="text-[10px] text-zinc-500 mb-3">Counts by anomaly type for the selected dataset</div>
+                            <ReactECharts option={issueOverviewOption(quality)} style={{ height: 230 }} />
+                          </div>
+
+                          <div className="rounded-2xl border border-white/[0.04] p-5 bg-slate-900/30 backdrop-blur-md">
+                            <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Anomaly Timeline</div>
+                            <div className="text-[10px] text-zinc-500 mb-3">Where spikes, gaps, and corrupted candles occur over time</div>
+                            <ReactECharts option={issueTimelineOption(quality)} style={{ height: 230 }} />
+                          </div>
                         </div>
 
-                        <div className="card p-4">
-                          <div className="section-label mb-1">Anomaly Timeline</div>
-                          <div className="text-[11px] text-zinc-600 mb-3">Where spikes, gaps, and corrupted candles occur over time</div>
-                          <ReactECharts option={issueTimelineOption(quality)} style={{ height: 200 }} />
-                        </div>
-
-                        <div className="card p-4">
-                          <div className="section-label mb-3" title="Tóm Tắt Tính Toàn Vẹn">Integrity Summary</div>
+                        <div className="rounded-2xl border border-white/[0.04] p-5 bg-slate-900/30 backdrop-blur-md shadow-[inset_0_0_20px_rgba(255,255,255,0.015)]">
+                          <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-4">Integrity Summary</div>
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-                            <div className="rounded-lg border border-white/[0.07] p-3 bg-white/[0.02]">
-                              <div className="text-zinc-500 mb-1"><span title="Khoảng Cách Kỳ Vọng">Expected Interval</span></div>
-                              <div className="text-zinc-200 font-mono">
+                            <div className="rounded-xl border border-white/[0.05] p-3.5 bg-white/[0.01] hover:bg-white/[0.02] transition-colors">
+                              <div className="text-zinc-500 text-[10px] font-semibold uppercase tracking-wider mb-1">Expected Interval</div>
+                              <div className="text-zinc-200 font-mono font-bold text-base">
                                 {quality.expectedIntervalSec == null ? 'Unknown' : `${quality.expectedIntervalSec}s`}
                               </div>
                             </div>
-                            <div className="rounded-lg border border-white/[0.07] p-3 bg-white/[0.02]">
-                              <div className="text-zinc-500 mb-1"><span title="Số Dòng Thực Tế">Observed Rows</span></div>
-                              <div className="text-zinc-200 font-mono">{quality.observedRows.toLocaleString()}</div>
+                            <div className="rounded-xl border border-white/[0.05] p-3.5 bg-white/[0.01] hover:bg-white/[0.02] transition-colors">
+                              <div className="text-zinc-500 text-[10px] font-semibold uppercase tracking-wider mb-1">Observed Rows</div>
+                              <div className="text-zinc-200 font-mono font-bold text-base">{quality.observedRows.toLocaleString()}</div>
                             </div>
-                            <div className="rounded-lg border border-white/[0.07] p-3 bg-white/[0.02]">
-                              <div className="text-zinc-500 mb-1"><span title="Số Dòng Kỳ Vọng (khoảng)">Expected Rows (range)</span></div>
-                              <div className="text-zinc-200 font-mono">{quality.expectedRows == null ? 'N/A' : quality.expectedRows.toLocaleString()}</div>
+                            <div className="rounded-xl border border-white/[0.05] p-3.5 bg-white/[0.01] hover:bg-white/[0.02] transition-colors">
+                              <div className="text-zinc-500 text-[10px] font-semibold uppercase tracking-wider mb-1">Expected Rows (range)</div>
+                              <div className="text-zinc-200 font-mono font-bold text-base">
+                                {quality.expectedRows == null ? 'N/A' : quality.expectedRows.toLocaleString()}
+                              </div>
                             </div>
                           </div>
                         </div>

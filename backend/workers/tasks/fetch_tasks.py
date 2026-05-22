@@ -19,15 +19,52 @@ def _create_dataset_record(
     date_from: str | None,
     date_to: str | None,
 ) -> str:
-    """Insert a Dataset row and return its UUID string."""
+    """Insert a Dataset row and return its UUID string, overwriting duplicates in DB and MinIO."""
     from sqlalchemy import create_engine as _ce, text
-    import json as _json
+    from app.core.storage import delete_file, parse_s3_uri
 
     sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
     engine = _ce(sync_url)
 
     dataset_id = str(uuid4())
     with engine.begin() as conn:
+        # 1. Search for existing duplicates
+        duplicates = conn.execute(
+            text("""
+                SELECT id, s3_raw_path FROM datasets
+                WHERE symbol = :symbol AND timeframe = :timeframe AND source = :source
+            """),
+            {
+                "symbol": symbol.upper(),
+                "timeframe": timeframe,
+                "source": source,
+            }
+        ).fetchall()
+
+        # 2. Delete old duplicate files from MinIO S3
+        for row in duplicates:
+            old_s3_path = row[1]
+            if old_s3_path:
+                try:
+                    bucket, key = parse_s3_uri(old_s3_path)
+                    delete_file(bucket, key)
+                except Exception:
+                    pass
+
+        # 3. Delete duplicate DB records
+        conn.execute(
+            text("""
+                DELETE FROM datasets
+                WHERE symbol = :symbol AND timeframe = :timeframe AND source = :source
+            """),
+            {
+                "symbol": symbol.upper(),
+                "timeframe": timeframe,
+                "source": source,
+            }
+        )
+
+        # 4. Insert new dataset record
         conn.execute(
             text("""
                 INSERT INTO datasets

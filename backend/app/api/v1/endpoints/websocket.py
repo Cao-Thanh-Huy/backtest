@@ -13,6 +13,38 @@ router = APIRouter()
 _POLL_INTERVAL = 0.8
 
 
+@router.get("/task/{task_id}")
+async def get_task_status(task_id: str):
+    """Query the current progress of a Celery task via HTTP."""
+    result = celery_app.AsyncResult(task_id)
+    state = result.state
+
+    payload = {
+        "task_id": task_id,
+        "status": state,
+        "progress": 0,
+        "message": ""
+    }
+
+    if state == "PENDING":
+        payload["message"] = "Task queued, waiting for worker..."
+    elif state == "PROGRESS":
+        meta = result.info or {}
+        payload["progress"] = meta.get("progress", 0)
+        payload["message"] = meta.get("message", "")
+    elif state == "SUCCESS":
+        payload["progress"] = 100
+        payload["message"] = "Completed"
+        payload["result"] = result.result
+    elif state == "FAILURE":
+        payload["progress"] = 0
+        payload["error"] = str(result.result)
+    else:
+        payload["message"] = state
+
+    return payload
+
+
 @router.websocket("/task/{task_id}")
 async def task_progress(websocket: WebSocket, task_id: str):
     """

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-from app.core.storage import upload_file, get_presigned_url, parse_s3_uri, download_bytes
+from app.core.storage import upload_file, get_presigned_url, parse_s3_uri, download_bytes, delete_file
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.db_models import Dataset, FeaturePipeline
@@ -421,4 +421,13 @@ async def delete_dataset(dataset_id: UUID, db: AsyncSession = Depends(get_db)):
     dataset = await db.get(Dataset, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # Clean up file on MinIO S3
+    if dataset.s3_raw_path:
+        try:
+            bucket, key = parse_s3_uri(dataset.s3_raw_path)
+            delete_file(bucket, key)
+        except Exception:
+            pass
+            
     await db.delete(dataset)

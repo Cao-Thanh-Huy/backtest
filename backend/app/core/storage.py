@@ -68,3 +68,12 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     assert uri.startswith("s3://"), f"Not an S3 URI: {uri}"
     parts = uri[5:].split("/", 1)
     return parts[0], parts[1]
+
+
+def delete_file(bucket: str, key: str) -> None:
+    """Delete an object from MinIO."""
+    client = _get_client()
+    try:
+        client.delete_object(Bucket=bucket, Key=key)
+    except ClientError:
+        pass
