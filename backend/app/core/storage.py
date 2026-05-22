@@ -44,6 +44,12 @@ def download_bytes(bucket: str, key: str) -> bytes:
     return buf.read()
 
 
+def download_to_file(bucket: str, key: str, dest_path: str) -> None:
+    """Download an object directly to a local file on disk (zero memory footprint)."""
+    client = _get_client()
+    client.download_file(bucket, key, dest_path)
+
+
 def get_presigned_url(bucket: str, key: str, expires: int = 3600) -> str:
     """Generate a pre-signed GET URL."""
     client = _get_client()

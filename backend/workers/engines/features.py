@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore")
 # Reduces to prevent OOM when param_sweep generates large column sets.
 # NOTE: this is SEPARATE from Feature Selection page (/lab/feature-selection) which runs
 # VIF/Spearman/MI/LightGBM on an already-compiled pipeline.
-MAX_ENGINE_A_OUTPUT_COLUMNS = 1000
+MAX_ENGINE_A_OUTPUT_COLUMNS = 10000
 ENGINE_A_FAMILY_WINDOW_ROWS = 50_000
 
 
@@ -153,17 +153,209 @@ def _apply_indicator_windowed(
 # ENGINE A — Feature Generator
 # =============================================================================
 
-def _rsi(close: np.ndarray, length: int = 14) -> np.ndarray:
-    """Calculate RSI using Wilder's Smoothed Moving Average (alpha = 1/length)."""
+@numba.njit(cache=True)
+def _consecutive_duration_numba(cond: np.ndarray) -> np.ndarray:
+    n = len(cond)
+    res = np.empty(n, dtype=numba.float64)
+    count = 0.0
+    for i in range(n):
+        val = cond[i]
+        if np.isnan(val):
+            res[i] = np.nan
+        elif val > 0.5:
+            count += 1.0
+            res[i] = count
+        else:
+            count = 0.0
+            res[i] = 0.0
+    return res
+
+
+@numba.njit(cache=True)
+def _bars_since_cross_numba(close_above: np.ndarray) -> np.ndarray:
+    n = len(close_above)
+    res = np.empty(n, dtype=numba.float64)
+    since = np.nan
+    for i in range(n):
+        val = close_above[i]
+        if np.isnan(val):
+            res[i] = np.nan
+        elif val > 0.5:
+            since = 0.0
+            res[i] = since
+        else:
+            if not np.isnan(since):
+                since += 1.0
+            res[i] = since
+    return res
+
+
+@numba.njit(cache=True)
+def _ewm_numba(arr: np.ndarray, alpha: float, min_periods: int) -> np.ndarray:
+    n = len(arr)
+    out = np.empty(n, dtype=numba.float64)
+    out[:] = np.nan
+    start_idx = -1
+    for i in range(n):
+        if not np.isnan(arr[i]):
+            start_idx = i
+            break
+    if start_idx == -1:
+        return out
+    val = arr[start_idx]
+    out[start_idx] = val
+    for i in range(start_idx + 1, n):
+        if np.isnan(arr[i]):
+            out[i] = np.nan
+        else:
+            val = alpha * arr[i] + (1.0 - alpha) * val
+            out[i] = val
+    valid_count = 0
+    for i in range(n):
+        if not np.isnan(arr[i]):
+            valid_count += 1
+        if valid_count < min_periods:
+            out[i] = np.nan
+    return out
+
+
+@numba.njit(cache=True)
+def _rsi_numba(close: np.ndarray, length: int) -> np.ndarray:
+    n = len(close)
+    out = np.empty(n, dtype=numba.float64)
+    out[:] = np.nan
+    if n <= length:
+        return out
     delta = np.diff(close)
-    gain = np.where(delta > 0, delta, 0.0)
-    loss = np.where(delta < 0, -delta, 0.0)
+    gain = np.empty(n - 1, dtype=numba.float64)
+    loss = np.empty(n - 1, dtype=numba.float64)
+    for i in range(n - 1):
+        d = delta[i]
+        if d > 0:
+            gain[i] = d
+            loss[i] = 0.0
+        else:
+            gain[i] = 0.0
+            loss[i] = -d
     alpha = 1.0 / length
-    avg_gain = pd.Series(gain).ewm(alpha=alpha, min_periods=length, adjust=False).mean().values
-    avg_loss = pd.Series(loss).ewm(alpha=alpha, min_periods=length, adjust=False).mean().values
-    rs = avg_gain / (avg_loss + 1e-10)
-    rsi = 100 - (100 / (1 + rs))
-    return np.concatenate([[np.nan], rsi])
+    avg_gain = _ewm_numba(gain, alpha, length)
+    avg_loss = _ewm_numba(loss, alpha, length)
+    rsi = np.empty(n - 1, dtype=numba.float64)
+    for i in range(n - 1):
+        g = avg_gain[i]
+        l = avg_loss[i]
+        if np.isnan(g) or np.isnan(l):
+            rsi[i] = np.nan
+        else:
+            rs = g / (l + 1e-10)
+            rsi[i] = 100.0 - (100.0 / (1.0 + rs))
+    out[0] = np.nan
+    out[1:] = rsi
+    return out
+
+
+@numba.njit(cache=True)
+def _rolling_slope_numba(arr: np.ndarray, window: int) -> np.ndarray:
+    n = len(arr)
+    out = np.empty(n, dtype=numba.float64)
+    out[:] = np.nan
+    if n < window:
+        return out
+    x = np.arange(window, dtype=numba.float64)
+    x_mean = x.mean()
+    x_dev = x - x_mean
+    x_var = (x_dev ** 2).sum()
+    for i in range(window - 1, n):
+        window_y = arr[i - window + 1 : i + 1]
+        has_nan = False
+        for val in window_y:
+            if np.isnan(val):
+                has_nan = True
+                break
+        if has_nan:
+            continue
+        dot_sum = 0.0
+        for j in range(window):
+            dot_sum += x_dev[j] * window_y[j]
+        out[i] = dot_sum / x_var
+    return out
+
+
+@numba.njit(cache=True)
+def _rolling_mean_numba(arr: np.ndarray, window: int) -> np.ndarray:
+    n = len(arr)
+    out = np.empty(n, dtype=numba.float64)
+    out[:] = np.nan
+    if n < window:
+        return out
+    for i in range(window - 1, n):
+        window_y = arr[i - window + 1 : i + 1]
+        has_nan = False
+        s = 0.0
+        for val in window_y:
+            if np.isnan(val):
+                has_nan = True
+                break
+            s += val
+        if not has_nan:
+            out[i] = s / window
+    return out
+
+
+@numba.njit(cache=True)
+def _rolling_std_numba(arr: np.ndarray, window: int) -> np.ndarray:
+    n = len(arr)
+    out = np.empty(n, dtype=numba.float64)
+    out[:] = np.nan
+    if n < window:
+        return out
+    for i in range(window - 1, n):
+        window_y = arr[i - window + 1 : i + 1]
+        has_nan = False
+        for val in window_y:
+            if np.isnan(val):
+                has_nan = True
+                break
+        if has_nan:
+            continue
+        s = 0.0
+        for val in window_y:
+            s += val
+        m = s / window
+        var_sum = 0.0
+        for val in window_y:
+            var_sum += (val - m) ** 2
+        out[i] = np.sqrt(var_sum / (window - 1))
+    return out
+
+
+@numba.njit(cache=True)
+def _rolling_percentile_numba(arr: np.ndarray, window: int) -> np.ndarray:
+    n = len(arr)
+    out = np.empty(n, dtype=numba.float64)
+    out[:] = np.nan
+    if n < window:
+        return out
+    for i in range(window - 1, n):
+        window_y = arr[i - window + 1 : i + 1]
+        has_nan = False
+        for val in window_y:
+            if np.isnan(val):
+                has_nan = True
+                break
+        if has_nan:
+            continue
+        last_val = window_y[-1]
+        count_smaller = 0
+        count_equal = 0
+        for val in window_y:
+            if val < last_val:
+                count_smaller += 1
+            elif val == last_val:
+                count_equal += 1
+        rank = count_smaller + 1.0 + 0.5 * (count_equal - 1.0)
+        out[i] = rank / window
+    return out
 
 
 def _macd(close: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9) -> tuple:
@@ -242,9 +434,9 @@ def _build_param_combos(name: str, params: dict, sweep: dict) -> list[dict]:
         step = cfg.get("step", 1)
         # For float params (std, etc.) use np.arange; otherwise use int range
         if isinstance(lo, float) or isinstance(hi, float) or isinstance(step, float):
-            vals = [round(v, 4) for v in np.arange(lo, hi + step * 0.001, step)][:50]
+            vals = [round(v, 4) for v in np.arange(lo, hi + step * 0.001, step)][:1000]
         else:
-            vals = list(range(int(lo), int(hi) + 1, max(int(step), 1)))[:50]
+            vals = list(range(int(lo), int(hi) + 1, max(int(step), 1)))[:1000]
         ranges.append(vals)
 
     combos = []
@@ -264,8 +456,179 @@ def _apply_indicator(df: pd.DataFrame, name: str, params: dict) -> list[str]:
     if name == "rsi":
         length = int(params.get("length", 14))
         col = f"rsi_{length}"
-        df[col] = _rsi(df["close"].values, length)
+        rsi_vals = _rsi_numba(df["close"].values, length)
+        df[col] = rsi_vals
         new_cols.append(col)
+
+        # Legacy threshold and trend support
+        if params.get("include_threshold", False):
+            col_gt = f"rsi_{length}_gt_50"
+            df[col_gt] = (rsi_vals > 50.0).astype(float)
+            new_cols.append(col_gt)
+
+            col_lt = f"rsi_{length}_lt_50"
+            df[col_lt] = (rsi_vals < 50.0).astype(float)
+            new_cols.append(col_lt)
+
+        if params.get("include_trend", False):
+            col_trend = f"rsi_{length}_trend"
+            diff = rsi_vals - _fast_shift_1d(rsi_vals, 1)
+            df[col_trend] = np.where(np.isnan(diff), np.nan, (diff > 0).astype(float))
+            new_cols.append(col_trend)
+
+        # 1. Raw & Distance Features
+        if params.get("include_raw_extras", False):
+            df[f"rsi_{length}_norm"] = rsi_vals / 100.0
+            df[f"rsi_{length}_centered"] = (rsi_vals - 50.0) / 50.0
+            df[f"rsi_{length}_dist_50"] = rsi_vals - 50.0
+            df[f"rsi_{length}_dist_70"] = 70.0 - rsi_vals
+            df[f"rsi_{length}_dist_30"] = rsi_vals - 30.0
+            new_cols.extend([
+                f"rsi_{length}_norm",
+                f"rsi_{length}_centered",
+                f"rsi_{length}_dist_50",
+                f"rsi_{length}_dist_70",
+                f"rsi_{length}_dist_30"
+            ])
+
+        # 2. Multi-zone Market Regimes
+        if params.get("include_multi_zone", False):
+            df[f"rsi_{length}_gt_70"] = (rsi_vals > 70.0).astype(float)
+            df[f"rsi_{length}_lt_30"] = (rsi_vals < 30.0).astype(float)
+            conds = [
+                rsi_vals <= 20.0,
+                rsi_vals <= 30.0,
+                rsi_vals <= 45.0,
+                rsi_vals <= 55.0,
+                rsi_vals <= 70.0,
+                rsi_vals <= 80.0
+            ]
+            choices = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+            zone_vals = np.select(conds, choices, default=6.0)
+            df[f"rsi_{length}_zone"] = np.where(np.isnan(rsi_vals), np.nan, zone_vals)
+            new_cols.extend([
+                f"rsi_{length}_gt_70",
+                f"rsi_{length}_lt_30",
+                f"rsi_{length}_zone"
+            ])
+
+        # 3. Momentum & Slope Analysis
+        if params.get("include_momentum_slope", False):
+            delta_1 = rsi_vals - _fast_shift_1d(rsi_vals, 1)
+            delta_3 = rsi_vals - _fast_shift_1d(rsi_vals, 3)
+            delta_5 = rsi_vals - _fast_shift_1d(rsi_vals, 5)
+            accel = delta_1 - _fast_shift_1d(delta_1, 1)
+            
+            df[f"rsi_{length}_delta_1"] = delta_1
+            df[f"rsi_{length}_delta_3"] = delta_3
+            df[f"rsi_{length}_delta_5"] = delta_5
+            df[f"rsi_{length}_acceleration"] = accel
+            df[f"rsi_{length}_slope_5"] = _rolling_slope_numba(rsi_vals, 5)
+            df[f"rsi_{length}_slope_10"] = _rolling_slope_numba(rsi_vals, 10)
+            new_cols.extend([
+                f"rsi_{length}_delta_1",
+                f"rsi_{length}_delta_3",
+                f"rsi_{length}_delta_5",
+                f"rsi_{length}_acceleration",
+                f"rsi_{length}_slope_5",
+                f"rsi_{length}_slope_10"
+            ])
+
+        # 4. Divergence Analysis
+        if params.get("include_divergence", False):
+            close = df["close"].values
+            close_shift_5 = _fast_shift_1d(close, 5)
+            rsi_shift_5 = _fast_shift_1d(rsi_vals, 5)
+            
+            bull_div = (close < close_shift_5) & (rsi_vals > rsi_shift_5)
+            bear_div = (close > close_shift_5) & (rsi_vals < rsi_shift_5)
+            hidden_bull = (close > close_shift_5) & (rsi_vals < rsi_shift_5)
+            hidden_bear = (close < close_shift_5) & (rsi_vals > rsi_shift_5)
+            
+            df[f"rsi_{length}_bull_div"] = np.where(np.isnan(rsi_shift_5), np.nan, bull_div.astype(float))
+            df[f"rsi_{length}_bear_div"] = np.where(np.isnan(rsi_shift_5), np.nan, bear_div.astype(float))
+            df[f"rsi_{length}_hidden_bull"] = np.where(np.isnan(rsi_shift_5), np.nan, hidden_bull.astype(float))
+            df[f"rsi_{length}_hidden_bear"] = np.where(np.isnan(rsi_shift_5), np.nan, hidden_bear.astype(float))
+            new_cols.extend([
+                f"rsi_{length}_bull_div",
+                f"rsi_{length}_bear_div",
+                f"rsi_{length}_hidden_bull",
+                f"rsi_{length}_hidden_bear"
+            ])
+
+        # 5. RSI Trend Structure & Range Shift
+        if params.get("include_trend_structure", False):
+            rsi_shift_5 = _fast_shift_1d(rsi_vals, 5)
+            df[f"rsi_{length}_hh"] = np.where(np.isnan(rsi_shift_5), np.nan, (rsi_vals > rsi_shift_5).astype(float))
+            df[f"rsi_{length}_ll"] = np.where(np.isnan(rsi_shift_5), np.nan, (rsi_vals < rsi_shift_5).astype(float))
+            
+            rsi_shift_2 = _fast_shift_1d(rsi_vals, 2)
+            df[f"rsi_{length}_sfp_bull"] = np.where(np.isnan(rsi_shift_2), np.nan, ((rsi_shift_2 < 30.0) & (rsi_vals > 30.0)).astype(float))
+            
+            in_bull = (rsi_vals >= 40.0) & (rsi_vals <= 90.0)
+            in_bear = (rsi_vals >= 10.0) & (rsi_vals <= 60.0)
+            df[f"rsi_{length}_bull_range"] = _rolling_mean_numba(in_bull.astype(np.float64), 20)
+            df[f"rsi_{length}_bear_range"] = _rolling_mean_numba(in_bear.astype(np.float64), 20)
+            new_cols.extend([
+                f"rsi_{length}_hh",
+                f"rsi_{length}_ll",
+                f"rsi_{length}_sfp_bull",
+                f"rsi_{length}_bull_range",
+                f"rsi_{length}_bear_range"
+            ])
+
+        # 6. Statistical RSI Features
+        if params.get("include_statistical", False):
+            mean_20 = _rolling_mean_numba(rsi_vals, 20)
+            std_20 = _rolling_std_numba(rsi_vals, 20)
+            df[f"rsi_{length}_mean_20"] = mean_20
+            df[f"rsi_{length}_std_20"] = std_20
+            df[f"rsi_{length}_zscore"] = (rsi_vals - mean_20) / (std_20 + 1e-10)
+            
+            df[f"rsi_{length}_percentile"] = _rolling_percentile_numba(rsi_vals, 50)
+            new_cols.extend([
+                f"rsi_{length}_mean_20",
+                f"rsi_{length}_std_20",
+                f"rsi_{length}_zscore",
+                f"rsi_{length}_percentile"
+            ])
+
+        # 7. Time Persistence Features
+        if params.get("include_persistence", False):
+            is_ob = (rsi_vals > 70.0).astype(float)
+            is_os = (rsi_vals < 30.0).astype(float)
+            is_above_50 = (rsi_vals > 50.0).astype(float)
+            is_below_50 = (rsi_vals < 50.0).astype(float)
+            
+            is_ob = np.where(np.isnan(rsi_vals), np.nan, is_ob)
+            is_os = np.where(np.isnan(rsi_vals), np.nan, is_os)
+            is_above_50 = np.where(np.isnan(rsi_vals), np.nan, is_above_50)
+            is_below_50 = np.where(np.isnan(rsi_vals), np.nan, is_below_50)
+            
+            df[f"rsi_{length}_ob_duration"] = _consecutive_duration_numba(is_ob)
+            df[f"rsi_{length}_os_duration"] = _consecutive_duration_numba(is_os)
+            df[f"rsi_{length}_since_cross_up_50"] = _bars_since_cross_numba(is_above_50)
+            df[f"rsi_{length}_since_cross_down_50"] = _bars_since_cross_numba(is_below_50)
+            new_cols.extend([
+                f"rsi_{length}_ob_duration",
+                f"rsi_{length}_os_duration",
+                f"rsi_{length}_since_cross_up_50",
+                f"rsi_{length}_since_cross_down_50"
+            ])
+
+        # 8. RSI Crossovers & fast/slow spreads
+        if params.get("include_crossovers", False):
+            rsi_sma = _rolling_mean_numba(rsi_vals, 9)
+            df[f"rsi_{length}_cross_signal"] = np.where(np.isnan(rsi_sma), np.nan, (rsi_vals > rsi_sma).astype(float))
+            
+            rsi_slow = _rsi_numba(df["close"].values, length * 2)
+            df[f"rsi_{length}_fast_slow_spread"] = rsi_vals - rsi_slow
+            df[f"rsi_{length}_fast_gt_slow"] = np.where(np.isnan(rsi_slow), np.nan, (rsi_vals > rsi_slow).astype(float))
+            new_cols.extend([
+                f"rsi_{length}_cross_signal",
+                f"rsi_{length}_fast_slow_spread",
+                f"rsi_{length}_fast_gt_slow"
+            ])
 
     elif name == "macd":
         fast = int(params.get("fast", 12))
@@ -569,31 +932,65 @@ def _apply_indicator(df: pd.DataFrame, name: str, params: dict) -> list[str]:
     return new_cols
 
 
+def _fast_shift_1d(arr: np.ndarray, lag: int) -> np.ndarray:
+    """Pure NumPy shift for 1D arrays, avoiding all Pandas Series overhead."""
+    # Force output dtype to float32 to support NaN values
+    out = np.empty_like(arr, dtype=np.float32)
+    out[:lag] = np.nan
+    out[lag:] = arr[:-lag]
+    return out
+
+
 def generate_features(
-    df_raw: pl.DataFrame,
+    df_raw: pd.DataFrame,
     indicators: list[dict[str, Any]],
     lags: list[int],
     progress_cb: Callable[[int, str, dict], None] | None = None,
-) -> tuple[pd.DataFrame, list[str]]:
+    output_parquet_path: str | None = None,
+) -> tuple[pd.DataFrame | None, list[str]]:
     """
-    Apply indicators dynamically and create lag features.
+    Apply indicators dynamically and create lag features using Zero-concat Accumulation.
 
     Parameters
     ----------
-    df_raw      : Polars DataFrame with OHLCV columns
+    df_raw      : Pandas DataFrame with OHLCV columns
     indicators  : list of {"name": "rsi", "params": {"length": 14}} or
                         {"name": "rsi", "params_sweep": {"length": {"min": 6, "max": 30, "step": 2}}}
     lags        : list of lag periods, e.g. [1, 2, 3]
     progress_cb : optional callback(percent, message, sub_counts) for granular progress
+    output_parquet_path : path to write the final Parquet file progressively (low RAM footprint)
 
     Returns
     -------
     (pandas DataFrame with original columns + indicator columns + lag columns, generated feature names)
+    If output_parquet_path is specified, returns (None, generated feature names) and saves to disk.
     """
-    # Convert to pandas
-    df = df_raw.to_pandas()
+    df = df_raw
     df.columns = [c.lower() for c in df.columns]
+    for col in df.columns:
+        if df[col].dtype.kind == 'f':
+            df[col] = df[col].astype(np.float32)
 
+    # Dictionary to accumulate all calculated feature columns as raw NumPy arrays
+    all_features_dict = {}
+    generated_cols: list[str] = []
+    generated_seen: set[str] = set()
+    temp_files = []
+
+    # If output_parquet_path is specified, write base columns first
+    if output_parquet_path:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import tempfile
+        import os
+
+        base_table = pa.Table.from_pandas(df, preserve_index=False)
+        base_fd, base_temp_path = tempfile.mkstemp(suffix=".parquet")
+        os.close(base_fd)
+        pq.write_table(base_table, base_temp_path)
+        temp_files.append(base_temp_path)
+        del base_table
+        gc.collect()
 
     # --- Batch by indicator family ---
     from collections import defaultdict
@@ -601,8 +998,6 @@ def generate_features(
     for ind in indicators:
         family_map[ind["name"].lower()].append(ind)
 
-    generated_cols: list[str] = []
-    generated_seen: set[str] = set()
     families = list(family_map.keys())
     total_families = len(families)
     for fam_idx, family in enumerate(families):
@@ -615,9 +1010,26 @@ def generate_features(
             param_combos.extend(_build_param_combos(family, params, sweep))
 
         # ── Early column budget check (before generating this family) ──────────
-        # Estimate how many new columns this family will add (width × combos)
         _FAMILY_WIDTHS = {"macd": 5, "bbands": 4, "stoch": 2}
-        estimated_new = len(param_combos) * _FAMILY_WIDTHS.get(family, 1)
+        width = _FAMILY_WIDTHS.get(family, 1)
+        if family == "rsi":
+            width = 0
+            for ind in inds:
+                p = ind.get("params", {})
+                w = 1
+                if p.get("include_threshold", False): w += 2
+                if p.get("include_trend", False): w += 1
+                if p.get("include_raw_extras", False): w += 5
+                if p.get("include_multi_zone", False): w += 3
+                if p.get("include_momentum_slope", False): w += 6
+                if p.get("include_divergence", False): w += 4
+                if p.get("include_trend_structure", False): w += 5
+                if p.get("include_statistical", False): w += 4
+                if p.get("include_persistence", False): w += 4
+                if p.get("include_crossovers", False): w += 3
+                width = max(width, w)
+
+        estimated_new = len(param_combos) * width
         projected_base = len(generated_cols) + estimated_new
         projected_total = projected_base * (1 + len(lags))
         if projected_total > MAX_ENGINE_A_OUTPUT_COLUMNS:
@@ -629,21 +1041,61 @@ def generate_features(
             )
         # ──────────────────────────────────────────────────────────────────────
 
+        # Extract only the base candle columns (e.g. ['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        # Mutation-safe copy for window-based indicator engine
+        base_cols = [c for c in ["timestamp", "open", "high", "low", "close", "volume"] if c in df.columns]
+        df_base = df[base_cols].copy()
+
         for combo_idx, combo in enumerate(param_combos):
             try:
                 new_cols = _apply_indicator_windowed(
-                    df,
+                    df_base,
                     family,
                     combo,
                     ENGINE_A_FAMILY_WINDOW_ROWS,
                 )
                 for col in new_cols:
-                    if col in df.columns and col not in generated_seen:
+                    if col in df_base.columns and col not in generated_seen:
                         generated_seen.add(col)
                         generated_cols.append(col)
+                        
+                        # Accumulate directly in the dict as flat float32 array (Zero-overhead)
+                        arr = df_base[col].to_numpy()
+                        if arr.dtype.kind == 'f':
+                            arr = arr.astype(np.float32)
+                        all_features_dict[col] = arr
+
+                        # If writing progressively, calculate lags immediately to keep chunk sizes uniform
+                        if output_parquet_path:
+                            for lag in lags:
+                                lag_col = f"{col}_lag{lag}"
+                                if lag_col not in generated_seen:
+                                    lag_arr = _fast_shift_1d(arr, lag)
+                                    if lag_arr.dtype.kind == 'f':
+                                        lag_arr = lag_arr.astype(np.float32)
+                                    all_features_dict[lag_col] = lag_arr
+                                    generated_cols.append(lag_col)
+                                    generated_seen.add(lag_col)
+                
+                # Keep df_base minimal by dropping generated columns immediately
+                df_base.drop(columns=new_cols, inplace=True)
             except Exception as exc:
                 print(f"[FeatureEngine] Warning: indicator {family!r} params={combo} failed — {exc}")
                 continue
+
+            # Flush to disk if chunk reaches 200 columns to keep RAM extremely clean
+            if output_parquet_path and len(all_features_dict) >= 200:
+                chunk_table = pa.Table.from_pydict(all_features_dict)
+                fd_chunk, chunk_path = tempfile.mkstemp(suffix=".parquet")
+                os.close(fd_chunk)
+                pq.write_table(chunk_table, chunk_path)
+                temp_files.append(chunk_path)
+                all_features_dict.clear()
+                del chunk_table
+                gc.collect()
+
+            if combo_idx % 50 == 0:
+                gc.collect()
 
             if progress_cb:
                 pct = int((fam_idx / total_families) * 80) + int((combo_idx / max(len(param_combos), 1)) * (80 // max(total_families, 1)))
@@ -654,31 +1106,98 @@ def generate_features(
                     "total": len(param_combos),
                 })
 
-        # Free unreferenced objects after each indicator family
+        # Free all base slice objects and garbage collect
+        del df_base
         gc.collect()
 
-    # ---------- Lag features ----------
-    # Final safety check (should be caught earlier per-family, but kept as backstop)
-    estimated_total_cols = len(generated_cols) * (1 + len(lags))
-    if estimated_total_cols > MAX_ENGINE_A_OUTPUT_COLUMNS:
-        raise ValueError(
-            "[FeatureEngine] Feature explosion detected: "
-            f"{estimated_total_cols} total columns ({len(generated_cols)} base × {1 + len(lags)} lag multiplier) "
-            f"exceeds hard limit {MAX_ENGINE_A_OUTPUT_COLUMNS}. "
-            "Disable some generators or narrow sweep ranges."
-        )
+    # Write remaining dict columns to disk
+    if output_parquet_path and all_features_dict:
+        chunk_table = pa.Table.from_pydict(all_features_dict)
+        fd_chunk, chunk_path = tempfile.mkstemp(suffix=".parquet")
+        os.close(fd_chunk)
+        pq.write_table(chunk_table, chunk_path)
+        temp_files.append(chunk_path)
+        all_features_dict.clear()
+        del chunk_table
+        gc.collect()
 
-    lag_base_cols = generated_cols.copy()
-    for col in lag_base_cols:
-        if col in df.columns:
-            for lag in lags:
-                lag_col = f"{col}_lag{lag}"
-                if lag_col in df.columns:
-                    continue
-                df[lag_col] = df[col].shift(lag)
-                generated_cols.append(lag_col)
+    # ---------- Legacy Lag features (In-Memory) ----------
+    if not output_parquet_path:
+        estimated_total_cols = len(generated_cols) * (1 + len(lags))
+        if estimated_total_cols > MAX_ENGINE_A_OUTPUT_COLUMNS:
+            raise ValueError(
+                "[FeatureEngine] Feature explosion detected: "
+                f"{estimated_total_cols} total columns ({len(generated_cols)} base × {1 + len(lags)} lag multiplier) "
+                f"exceeds hard limit {MAX_ENGINE_A_OUTPUT_COLUMNS}. "
+                "Disable some generators or narrow sweep ranges."
+            )
 
-    return df, generated_cols
+        lag_base_cols = generated_cols.copy()
+        for col in lag_base_cols:
+            if col in all_features_dict:
+                for lag in lags:
+                    lag_col = f"{col}_lag{lag}"
+                    if lag_col in generated_seen:
+                        continue
+                    
+                    # Perform fast pure NumPy shift bypassing all Pandas Series overhead
+                    arr = _fast_shift_1d(all_features_dict[col], lag)
+                    if arr.dtype.kind == 'f':
+                        arr = arr.astype(np.float32)
+                    all_features_dict[lag_col] = arr
+                    
+                    generated_cols.append(lag_col)
+                    generated_seen.add(lag_col)
+
+        # ---------- Single Late Materialization at the Finish Line ----------
+        if all_features_dict:
+            features_df = pd.DataFrame(all_features_dict, index=df.index)
+            df = pd.concat([df, features_df], axis=1)
+            del features_df
+            all_features_dict.clear()
+            gc.collect()
+
+        # Final safety cast pass to make sure everything is float32
+        for col in df.columns:
+            if df[col].dtype.kind == 'f':
+                df[col] = df[col].astype(np.float32)
+
+        return df, generated_cols
+
+    # ---------- Progressive Column-Wise PyArrow Joining (Zero-Copy) ----------
+    if output_parquet_path:
+        print(f"[FeatureEngine] Combining {len(temp_files)} chunks progressively into {output_parquet_path}...")
+        
+        # Read base table first
+        combined_table = pq.read_table(temp_files[0])
+        
+        # Metadata-only zero-copy column joining from other chunks
+        for path in temp_files[1:]:
+            chunk_table = pq.read_table(path)
+            for col_name in chunk_table.column_names:
+                combined_table = combined_table.append_column(col_name, chunk_table[col_name])
+            del chunk_table
+            gc.collect()
+
+        # Write combined Table to Parquet (very low RAM footprint)
+        pq.write_table(combined_table, output_parquet_path)
+        del combined_table
+        gc.collect()
+
+        # Cleanup temp files
+        for path in temp_files:
+            if os.path.exists(path):
+                os.unlink(path)
+
+        # Ép buộc glibc giải phóng toàn bộ bộ nhớ tạm về cho hệ điều hành ngay lập tức
+        import ctypes
+        try:
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+        except Exception:
+            pass
+
+        return None, generated_cols
 
 
 # =============================================================================

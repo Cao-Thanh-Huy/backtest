@@ -26,9 +26,9 @@ class Settings(BaseSettings):
 
     # Feature pipeline preflight guard
     # Column limit synced with MAX_ENGINE_A_OUTPUT_COLUMNS in features.py
-    feature_pipeline_preflight_max_columns: int = 1000
-    feature_pipeline_preflight_max_estimated_bytes: int = 3 * 1024 * 1024 * 1024
-    feature_pipeline_preflight_memory_multiplier: float = 5.0
+    feature_pipeline_preflight_max_columns: int = 10000
+    feature_pipeline_preflight_max_estimated_bytes: int = 50 * 1024 * 1024 * 1024
+    feature_pipeline_preflight_memory_multiplier: float = 1.5
 
     # MLflow
     mlflow_tracking_uri: str = "http://mlflow:5000"

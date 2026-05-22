@@ -431,3 +431,4 @@ async def delete_dataset(dataset_id: UUID, db: AsyncSession = Depends(get_db)):
             pass
             
     await db.delete(dataset)
+    await db.commit()

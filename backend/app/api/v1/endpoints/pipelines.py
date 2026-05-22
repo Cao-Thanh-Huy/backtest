@@ -62,9 +62,34 @@ def _combo_count_from_sweep(sweep: dict[str, dict[str, Any]]) -> int:
 def _indicator_column_estimate(indicator: IndicatorConfig | dict[str, Any]) -> int:
     raw = indicator if isinstance(indicator, dict) else indicator.model_dump()
     name = str(raw.get("name", "")).lower()
+    params = raw.get("params", {}) or {}
     sweep = raw.get("params_sweep", {}) or {}
     combo_count = _combo_count_from_sweep(sweep) if sweep else 1
+    
     width = _INDICATOR_OUTPUT_WIDTHS.get(name, 1)
+    if name == "rsi":
+        width = 1
+        if params.get("include_threshold", False):
+            width += 2
+        if params.get("include_trend", False):
+            width += 1
+        if params.get("include_raw_extras", False):
+            width += 5
+        if params.get("include_multi_zone", False):
+            width += 3
+        if params.get("include_momentum_slope", False):
+            width += 6
+        if params.get("include_divergence", False):
+            width += 4
+        if params.get("include_trend_structure", False):
+            width += 5
+        if params.get("include_statistical", False):
+            width += 4
+        if params.get("include_persistence", False):
+            width += 4
+        if params.get("include_crossovers", False):
+            width += 3
+            
     return combo_count * width
 
 
@@ -170,8 +195,20 @@ async def pipeline_preflight(payload: PipelinePreflightCreate, db: AsyncSession 
 
 
 async def _reconcile_pipeline_status(db: AsyncSession, pipeline: FeaturePipeline) -> FeaturePipeline:
-    if pipeline.status not in {StatusEnum.pending, StatusEnum.running}:
+    # Initialize dynamic attributes
+    pipeline.progress = None
+    pipeline.progress_message = None
+    pipeline.celery_ram_mb = None
+
+    if pipeline.status == StatusEnum.completed:
+        pipeline.progress = 100
+        pipeline.progress_message = "Completed"
         return pipeline
+    elif pipeline.status == StatusEnum.failed:
+        pipeline.progress = None
+        pipeline.progress_message = f"Failed: {pipeline.error_message or 'Unknown error'}"
+        return pipeline
+
     if not pipeline.celery_task_id:
         return pipeline
 
@@ -183,6 +220,18 @@ async def _reconcile_pipeline_status(db: AsyncSession, pipeline: FeaturePipeline
         pipeline.error_message = str(result.result)
         await db.commit()
         await db.refresh(pipeline)
+        pipeline.progress = None
+        pipeline.progress_message = f"Failed: {pipeline.error_message}"
+    elif state == "PROGRESS" and result.info:
+        pipeline.progress = result.info.get("progress")
+        pipeline.progress_message = result.info.get("message")
+        pipeline.celery_ram_mb = result.info.get("celery_ram_mb")
+    elif state == "PENDING":
+        pipeline.progress = 0
+        pipeline.progress_message = "Waiting in queue..."
+    elif state == "SUCCESS":
+        pipeline.progress = 100
+        pipeline.progress_message = "Completed"
 
     return pipeline
 

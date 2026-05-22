@@ -9,11 +9,12 @@ import os
 import tempfile
 
 import polars as pl
+import pandas as pd
 from celery import Task
 
 from workers.celery_app import celery_app
 from workers.engines.features import generate_features
-from app.core.storage import download_bytes, upload_file, parse_s3_uri
+from app.core.storage import download_to_file, upload_file, parse_s3_uri
 from app.core.config import settings
 
 
@@ -38,6 +39,19 @@ def _update_pipeline_state(pipeline_id: str, **kwargs):
     engine.dispose()
 
 
+def _get_current_ram_mb() -> float:
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return round(float(parts[1]) / 1024.0, 2)
+    except Exception:
+        pass
+    return 0.0
+
+
 @celery_app.task(
     bind=True,
     name="workers.tasks.pipeline_tasks.generate_pipeline_task",
@@ -54,9 +68,22 @@ def generate_pipeline_task(self: Task, pipeline_id: str):
 
     NOTE: No targets are generated here. Targets are handled by the Labeling System.
     """
+    def safe_update_state(progress: int, message: str, step: str = None, sub: dict = None):
+        ram = _get_current_ram_mb()
+        meta = {
+            "progress": progress,
+            "message": message,
+            "celery_ram_mb": ram,
+        }
+        if step:
+            meta["step"] = step
+        if sub:
+            meta["sub"] = sub
+        self.update_state(state="PROGRESS", meta=meta)
+
     try:
         # --- 1. Load pipeline config from DB ---
-        self.update_state(state="PROGRESS", meta={"progress": 5, "message": "Loading pipeline config..."})
+        safe_update_state(5, "Loading pipeline config...")
         from sqlalchemy import create_engine as _ce, text
         import json as _json
 
@@ -83,44 +110,55 @@ def generate_pipeline_task(self: Task, pipeline_id: str):
 
         _update_pipeline_state(pipeline_id, status="running")
 
-        # --- 2. Download raw Parquet from MinIO ---
-        self.update_state(state="PROGRESS", meta={"progress": 15, "message": "Downloading raw data..."})
+        # --- 2. Download raw Parquet from MinIO directly to disk (Zero-RAM) ---
+        safe_update_state(15, "Downloading raw data directly to disk...")
         bucket, key = parse_s3_uri(s3_raw_path)
-        raw_bytes = download_bytes(bucket, key)
-        df_raw = pl.read_parquet(io.BytesIO(raw_bytes))
+        
+        tmp_raw_fd, tmp_raw_path = tempfile.mkstemp(suffix=".parquet")
+        os.close(tmp_raw_fd)
+        
+        try:
+            download_to_file(bucket, key, tmp_raw_path)
+            # Nạp trực tiếp vào Pandas dùng PyArrow
+            df_pd_raw = pd.read_parquet(tmp_raw_path, engine="pyarrow")
+        finally:
+            if os.path.exists(tmp_raw_path):
+                os.unlink(tmp_raw_path)
 
         # --- 3. Engine A: Feature generation (indicators + lags) ---
-        self.update_state(state="PROGRESS", meta={
-            "progress": 30,
-            "message": "Generating indicators & lag features...",
-            "step": "STEP 2/3 Generating Features",
-            "sub": {"indicator": "", "done": 0, "total": len(indicators)},
-        })
+        safe_update_state(
+            30,
+            "Generating indicators & lag features...",
+            "STEP 2/3 Generating Features",
+            {"indicator": "", "done": 0, "total": len(indicators)},
+        )
 
         def _feature_progress(pct: int, msg: str, sub: dict):
-            self.update_state(state="PROGRESS", meta={
-                "progress": 30 + int(pct * 0.50),
-                "message": msg,
-                "step": "STEP 2/3 Generating Features",
-                "sub": sub,
-            })
-
-        df_pd, feature_cols = generate_features(df_raw, indicators, lags, progress_cb=_feature_progress)
+            safe_update_state(
+                30 + int(pct * 0.50),
+                msg,
+                "STEP 2/3 Generating Features",
+                sub,
+            )
 
         # --- 4. Save processed Parquet to MinIO ---
-        self.update_state(state="PROGRESS", meta={
-            "progress": 82,
-            "message": "Saving processed dataset to MinIO...",
-            "step": "STEP 3/3 Saving to Storage",
-        })
-
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".parquet")
         os.close(tmp_fd)
         try:
-            df_out = pl.from_pandas(df_pd)
-            df_out.write_parquet(tmp_path)
-            del df_out, df_pd
+            # Truyền tmp_path vào generate_features để ghi lũy tiến trực tiếp (RAM cực nhẹ)
+            _, feature_cols = generate_features(
+                df_pd_raw,
+                indicators,
+                lags,
+                progress_cb=_feature_progress,
+                output_parquet_path=tmp_path
+            )
+            
+            # Giải phóng toàn bộ RAM ngay lập tức
+            del df_pd_raw
             gc.collect()
+
+            safe_update_state(82, "Saving processed dataset to MinIO...", "STEP 3/3 Saving to Storage")
 
             processed_key = f"pipelines/{pipeline_id}/processed.parquet"
             with open(tmp_path, "rb") as fh:
@@ -135,7 +173,7 @@ def generate_pipeline_task(self: Task, pipeline_id: str):
                 os.unlink(tmp_path)
 
         # --- 5. Update DB ---
-        self.update_state(state="PROGRESS", meta={"progress": 95, "message": "Updating database..."})
+        safe_update_state(95, "Updating database...")
         _update_pipeline_state(
             pipeline_id,
             status="completed",

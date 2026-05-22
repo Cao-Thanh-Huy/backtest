@@ -88,6 +88,9 @@ class PipelineRead(BaseModel):
     lags: list[int] | None = None
     s3_processed_path: str | None
     error_message: str | None
+    progress: int | None = None
+    progress_message: str | None = None
+    celery_ram_mb: float | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -22,7 +22,7 @@ export function LabPage({ title, subtitle, action, list, detail, icon, children 
       {/* Page header — prominent, DE-Studio-style */}
       <div
         className="flex items-center justify-between px-7 h-[62px] border-b border-white/[0.06] shrink-0"
-        style={{ background: 'linear-gradient(180deg, #0D1526 0%, #0A1120 100%)' }}
+        style={{ background: 'var(--bg-secondary)' }}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
           {icon && (
@@ -38,7 +38,7 @@ export function LabPage({ title, subtitle, action, list, detail, icon, children 
 
       {/* Body */}
       {children ? (
-        <div className="flex-1 overflow-y-auto p-6 bg-[#080C14]">
+        <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg-primary)]">
           {children}
         </div>
       ) : (
@@ -50,7 +50,7 @@ export function LabPage({ title, subtitle, action, list, detail, icon, children 
             {list}
           </div>
           {/* Right — detail / preview */}
-          <div className="flex-1 overflow-y-auto p-6 bg-surface">
+          <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg-primary)]">
             {detail}
           </div>
         </div>

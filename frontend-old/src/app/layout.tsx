@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import './index-theme.css'
 import { Sidebar } from '@/components/ui/Sidebar'
 import { Providers } from './providers'
 

@@ -1,0 +1,213 @@
+import { Callout, CodeBlock, CodeDiff, Step } from '../components/mdx/DocComponents'
+
+# Hướng Dẫn Data Model — Iceberg Tables
+
+Trang này giúp bạn hiểu và vận hành các bảng **Apache Iceberg** trên DE Studio.
+Mỗi bước đều có nút **⚡ Inject** — bấm để chèn SQL thẳng vào Tab **SQL Editor** và chạy thử luôn.
+
+---
+
+## 🧊 Iceberg Table Format là gì?
+
+<Callout type="info" title="Tại sao dùng Iceberg?">
+Apache Iceberg là một **Open Table Format** chuẩn công nghiệp. So với Hive Table thông thường,
+Iceberg hỗ trợ **Time Travel**, **Schema Evolution**, **ACID transactions**
+và **Partition Pruning thông minh** — tất cả trên nền file Parquet/ORC ở S3/MinIO.
+</Callout>
+
+Kiến trúc lưu trữ của một Iceberg Table trong DE Studio:
+
+```
+s3a://warehouse/
+└── {schema}/
+    └── {table}/
+        ├── metadata/           ← Snapshots, schema, partition spec
+        │   ├── v1.metadata.json
+        │   └── snap-xxxx.avro
+        └── data/               ← Các file Parquet thực tế
+            ├── part-0001.parquet
+            └── ...
+```
+
+---
+
+## 📋 Bước 1: Tạo Bảng Đúng Chuẩn
+
+<Step num={1} title="Định nghĩa Schema và Partition Strategy">
+
+Partition strategy là quyết định quan trọng nhất khi tạo bảng. Partition sai sẽ khiến query chậm gấp 10-100x.
+
+<CodeBlock language="sql" blockId="create-table-basic" injectMode="replace">
+-- Tạo bảng với partition theo tháng (phổ biến nhất)
+CREATE TABLE iceberg.bronze.raw_orders (
+  order_id    BIGINT,
+  customer_id BIGINT,
+  amount      DECIMAL(18,6),
+  status      VARCHAR,
+  created_at  TIMESTAMP
+)
+WITH (
+  format            = 'PARQUET',
+  partitioning      = ARRAY['month(created_at)'],
+  sorted_by         = ARRAY['order_id']
+)
+</CodeBlock>
+
+<Callout type="tip" title="Chọn Partition Strategy đúng">
+- **`month(date_col)`** — Phù hợp dữ liệu transaction hàng ngày
+- **`day(date_col)`**   — Khi query thường filter theo ngày cụ thể và data volume lớn
+- **`bucket(N, id_col)`** — Khi không có timestamp, dùng ID để phân tán đều
+- **Không partition** — Chỉ dùng khi bảng &lt; 1GB (lookup tables, config...)
+</Callout>
+</Step>
+
+---
+
+## 🔍 Bước 2: Kiểm Tra Schema Bảng
+
+<Step num={2} title="Describe và kiểm tra cấu trúc">
+
+Sau khi tạo bảng, luôn verify lại cấu trúc bằng lệnh `DESCRIBE`:
+
+<CodeBlock language="sql" blockId="describe-table" injectMode="replace">
+-- Kiểm tra cấu trúc bảng
+DESCRIBE iceberg.bronze.raw_orders;
+
+-- Xem thêm thông tin partition và file format
+SHOW CREATE TABLE iceberg.bronze.raw_orders;
+</CodeBlock>
+
+</Step>
+
+---
+
+## ⚡ Bước 3: Tối Ưu File Layout (Compaction)
+
+<Step num={3} title="Chạy OPTIMIZE để gộp small files">
+
+Khi pipeline Streaming/Micro-batch ghi dữ liệu, chúng tạo ra hàng nghìn file nhỏ.
+Vấn đề này gọi là **Small Files Problem** — làm chậm query nghiêm trọng.
+
+<Callout type="warning" title="Dấu hiệu cần chạy OPTIMIZE">
+Bảng có **`file_count > 1000`** hoặc có nhiều file nhỏ hơn **10MB** → Cần Optimize ngay.
+Kiểm tra trong tab **Overview** của bảng.
+</Callout>
+
+<CodeDiff
+  language="sql"
+  before={`-- Trước Optimize: 5,000 file nhỏ, mỗi file ~2MB
+-- Query scan: 5,000 file x metadata loading = SLOW`}
+  after={`-- Sau OPTIMIZE: ~20 file lớn, mỗi file ~512MB
+-- Query scan: 20 file x metadata loading = FAST
+OPTIMIZE iceberg.bronze.raw_orders`}
+/>
+
+<CodeBlock language="sql" blockId="optimize-table" injectMode="replace">
+-- Chạy compaction để gộp small files → large efficient blocks (~512MB mỗi file)
+-- Thay 'bronze.raw_orders' bằng tên bảng của bạn
+OPTIMIZE iceberg.bronze.raw_orders
+</CodeBlock>
+
+<Callout type="info" title="Khi nào chạy OPTIMIZE?">
+Nên chạy định kỳ sau mỗi batch ingestion lớn, hoặc cài lịch chạy qua Pipeline Studio.
+**OPTIMIZE** không xóa dữ liệu, chỉ gộp file — hoàn toàn an toàn.
+</Callout>
+
+</Step>
+
+---
+
+## ⏰ Bước 4: Quản Lý Snapshot & Time Travel
+
+<Step num={4} title="Xem lịch sử và Time Travel">
+
+Iceberg tự động lưu **Snapshot** mỗi khi có thay đổi dữ liệu. Bạn có thể query dữ liệu ở bất kỳ thời điểm nào trong quá khứ.
+
+<CodeBlock language="sql" blockId="snapshots-query" injectMode="replace">
+-- Xem danh sách tất cả snapshots của bảng
+SELECT snapshot_id, committed_at, operation, summary
+FROM iceberg.bronze."raw_orders$snapshots"
+ORDER BY committed_at DESC
+LIMIT 20;
+</CodeBlock>
+
+<CodeBlock language="sql" blockId="time-travel" injectMode="replace">
+-- Time Travel: Query dữ liệu tại một snapshot cụ thể
+-- Thay snapshot_id bằng ID từ kết quả query ở trên
+SELECT * FROM iceberg.bronze.raw_orders
+FOR VERSION AS OF 1234567890123456789
+LIMIT 100;
+</CodeBlock>
+
+<Callout type="warning" title="Vacuum — Xóa vĩnh viễn snapshots cũ">
+Sau khi tích lũy nhiều snapshots, dùng tab **Optimize** để chạy **Vacuum**.
+Vacuum sẽ **xóa không thể khôi phục** các snapshots cũ hơn ngưỡng cấu hình.
+Khuyến nghị giữ **7 ngày** cho Production.
+</Callout>
+
+</Step>
+
+---
+
+## ✏️ Bước 5: ALTER TABLE — Thay Đổi Schema
+
+<Step num={5} title="Thêm, đổi tên, xóa cột">
+
+Iceberg hỗ trợ **Schema Evolution** — thay đổi schema mà không cần rebuild bảng.
+
+<CodeBlock language="sql" blockId="add-column" injectMode="cursor">
+-- Thêm cột mới (không ảnh hưởng dữ liệu cũ — NULL mặc định)
+ALTER TABLE iceberg.bronze.raw_orders
+ADD COLUMN discount_pct DECIMAL(5,2) COMMENT 'Phần trăm giảm giá';
+</CodeBlock>
+
+<CodeBlock language="sql" blockId="rename-column" injectMode="cursor">
+-- Đổi tên cột
+ALTER TABLE iceberg.bronze.raw_orders
+RENAME COLUMN status TO order_status;
+</CodeBlock>
+
+<CodeDiff
+  language="sql"
+  before={`-- Schema cũ
+order_id    BIGINT
+customer_id BIGINT  
+amount      DECIMAL(18,6)
+status      VARCHAR        ← tên cũ
+created_at  TIMESTAMP`}
+  after={`-- Schema sau khi ALTER
+order_id      BIGINT
+customer_id   BIGINT
+amount        DECIMAL(18,6)
+order_status  VARCHAR        ← tên mới
+created_at    TIMESTAMP
+discount_pct  DECIMAL(5,2)   ← cột mới thêm`}
+/>
+
+<Callout type="tip" title="Schema Evolution không Breaking">
+Iceberg lưu schema history — các file Parquet cũ không cần convert lại.
+Query engine tự động map schema cũ ↔ mới khi đọc.
+</Callout>
+
+</Step>
+
+---
+
+## 📊 Quick Reference
+
+| Lệnh | Mục đích | Nguy hiểm? |
+|------|----------|-----------|
+| `OPTIMIZE` | Gộp small files | ❌ Không |
+| `VACUUM` | Xóa snapshots cũ | ✅ Không rollback được |
+| `ALTER TABLE ADD COLUMN` | Thêm cột | ❌ Không |
+| `ALTER TABLE RENAME COLUMN` | Đổi tên cột | ❌ Không |
+| `ALTER TABLE DROP COLUMN` | Xóa cột | ⚠️ Cẩn thận |
+
+---
+
+<Callout type="tip" title="Cần hỗ trợ thêm?">
+- **Tab Overview**: Xem stats bảng (rows, files, size, snapshots)
+- **Tab Schema**: Quản lý columns trực quan không cần SQL
+- **Tab Snapshots**: Time travel & rollback dễ dàng
+- **Tab Optimize**: Compaction & Vacuum với UI
+</Callout>
