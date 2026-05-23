@@ -143,8 +143,28 @@ async def get_feature_set(feature_set_id: UUID, db: AsyncSession = Depends(get_d
     return fs
 
 
+def _clean_nan_inf_pandas(rows_list: list[dict]) -> list[dict]:
+    """Thay thế mọi giá trị NaN, inf, -inf thành None (null trong JSON) bằng Python thuần túy."""
+    import math
+    if not rows_list:
+        return rows_list
+    return [
+        {
+            k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
+            for k, v in r.items()
+        }
+        for r in rows_list
+    ]
+
+
 @router.get("/{feature_set_id}/preview")
-async def preview_feature_set(feature_set_id: UUID, rows: int = 200, db: AsyncSession = Depends(get_db)):
+async def preview_feature_set(
+    feature_set_id: UUID, 
+    rows: int = 200, 
+    col_offset: int = 0, 
+    col_limit: int = 50, 
+    db: AsyncSession = Depends(get_db)
+):
     """Return only selected columns + target from the LabeledDataset's parquet."""
     import io
     import json
@@ -166,15 +186,33 @@ async def preview_feature_set(feature_set_id: UUID, rows: int = 200, db: AsyncSe
         raw = download_bytes(bucket, key)
         df = pl.read_parquet(io.BytesIO(raw))
 
-        keep = [c for c in fs.selected_columns if c in df.columns]
+        keep = []
+        if "timestamp" in df.columns:
+            keep.append("timestamp")
+            
+        for c in fs.selected_columns:
+            if c in df.columns and c not in keep:
+                keep.append(c)
+                
         if fs.target_column in df.columns and fs.target_column not in keep:
             keep.append(fs.target_column)
+            
         df = df.select(keep)
+        
+        # Dynamic row capping based on column count to prevent browser freezes
+        actual_rows = rows
+        if len(df.columns) > 1000:
+            actual_rows = min(rows, 5)
+        elif len(df.columns) > 200:
+            actual_rows = min(rows, 10)
 
-        schema = [{"name": c, "type": str(df.schema[c])} for c in df.columns]
-        rows_data = df.head(rows).to_dicts()
+        # Slice columns dynamically to support column streaming
+        columns_to_preview = df.columns[col_offset : col_offset + col_limit]
+        schema = [{"name": c, "type": str(df.schema[c])} for c in columns_to_preview]
+        rows_data = df.select(columns_to_preview).head(actual_rows).to_dicts()
         rows_str = json.loads(json.dumps(rows_data, default=str))
-        return {"row_count": len(df), "column_count": len(df.columns), "columns": schema, "rows": rows_str}
+        rows_clean = _clean_nan_inf_pandas(rows_str)
+        return {"row_count": len(df), "column_count": len(df.columns), "columns": schema, "rows": rows_clean}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Preview failed: {exc}")
 

@@ -280,6 +280,7 @@ export default function MarketIntake() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [statsData, setStatsData] = useState(null)
   const [statsLoading, setStatsLoading] = useState(false)
+  const [streamingProgress, setStreamingProgress] = useState({ current: 0, total: 0, active: false })
 
   // Load Datasets
   const loadDatasets = async () => {
@@ -454,36 +455,94 @@ export default function MarketIntake() {
     showToast(`${active ? 'Kích hoạt' : 'Hủy kích hoạt'} Live Feed cho ${sym}`, 'success')
   }
 
-  // Fetch details reactively when selectedDataset changes (via URL ID)
+  // Fetch details reactively when selectedDataset changes (via URL ID) with Column Streaming
   useEffect(() => {
     if (!selectedDataset) return
+
+    let isMounted = true
 
     const fetchDetails = async () => {
       setPreviewLoading(true)
       setStatsLoading(true)
       setPreviewData(null)
       setStatsData(null)
+      setStreamingProgress({ current: 0, total: 0, active: false })
 
+      // 1. Fetch first batch (0 to 50 columns) for instant preview
+      let firstBatch = null
       try {
-        const p = await api.previewDataset(selectedDataset.id, 50)
-        setPreviewData(p)
+        firstBatch = await api.previewDataset(selectedDataset.id, 15, 0, 50)
+        if (isMounted) {
+          setPreviewData(firstBatch)
+          setStreamingProgress({
+            current: firstBatch.columns ? firstBatch.columns.length : 0,
+            total: firstBatch.column_count || 0,
+            active: (firstBatch.column_count || 0) > (firstBatch.columns ? firstBatch.columns.length : 0)
+          })
+        }
       } catch (e) {
-        console.error(e)
+        console.error("Error loading preview batch 1:", e)
       } finally {
-        setPreviewLoading(false)
+        if (isMounted) setPreviewLoading(false)
       }
 
+      // Fetch statistical insights
       try {
         const s = await api.getDatasetStats(selectedDataset.id)
-        setStatsData(s)
+        if (isMounted) setStatsData(s)
       } catch (e) {
-        console.error(e)
+        console.error("Error loading dataset stats:", e)
       } finally {
-        setStatsLoading(false)
+        if (isMounted) setStatsLoading(false)
+      }
+
+      // 2. Stream remaining column batches asynchronously in the background
+      if (firstBatch && firstBatch.column_count > 50) {
+        const totalCols = firstBatch.column_count
+        let currentOffset = 50
+        const limit = 50
+
+        while (currentOffset < totalCols && isMounted) {
+          try {
+            const nextBatch = await api.previewDataset(selectedDataset.id, 15, currentOffset, limit)
+            if (!isMounted) break
+
+            setPreviewData(prev => {
+              if (!prev) return nextBatch
+              const newCols = [...prev.columns, ...(nextBatch.columns || [])]
+              const newRows = prev.rows.map((row, ri) => ({
+                ...row,
+                ...(nextBatch.rows[ri] || {})
+              }))
+              return {
+                ...prev,
+                columns: newCols,
+                rows: newRows
+              }
+            })
+
+            currentOffset += limit
+            setStreamingProgress({
+              current: Math.min(currentOffset, totalCols),
+              total: totalCols,
+              active: currentOffset < totalCols
+            })
+
+            // Short sleep to throttle background requests & keep UI thread responsive
+            await new Promise(resolve => setTimeout(resolve, 50))
+          } catch (err) {
+            console.error("Error streaming column batch:", err)
+            await new Promise(resolve => setTimeout(resolve, 500))
+          }
+        }
       }
     }
 
     fetchDetails()
+
+    return () => {
+      isMounted = false
+    }
   }, [selectedDataset])
 
   // Toggle enrichment select
@@ -682,31 +741,62 @@ export default function MarketIntake() {
                     No preview data available for this symbol.
                   </div>
                 ) : (
-                  <div style={{ overflowX: 'auto', border: '1px solid #1e293b', borderRadius: 8, background: '#070a14' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, textAlign: 'left' }}>
-                      <thead style={{ background: '#0a0f1e', borderBottom: '1px solid #1e293b' }}>
-                        <tr>
-                          {previewData.columns.map(c => (
-                            <th key={c.name} style={{ padding: '12px 16px', fontWeight: 600, color: '#e2e8f0', borderBottom: '1px solid #1e293b' }}>
-                              <div>{c.name}</div>
-                              <div style={{ fontSize: 9, color: '#64748b', fontFamily: 'monospace', textTransform: 'uppercase', marginTop: 4 }}>{c.type}</div>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {previewData.rows.slice(0, 15).map((row, ri) => (
-                          <tr key={ri} style={{ borderBottom: '1px solid #1e293b', background: ri % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                  <>
+                    {/* Metadata Box & Streaming Progress */}
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      background: '#0d1527', border: '1px solid #1e293b', padding: '12px 16px',
+                      borderRadius: 8, fontSize: 12
+                    }}>
+                      <div style={{ display: 'flex', gap: 20 }}>
+                        <span style={{ color: '#94a3b8' }}>
+                          Tổng số dòng: <strong style={{ color: '#10b981' }}>{previewData.row_count?.toLocaleString() || '—'}</strong>
+                        </span>
+                        <span style={{ color: '#94a3b8' }}>
+                          Tổng số cột: <strong style={{ color: '#6366f1' }}>{previewData.column_count?.toLocaleString() || '—'}</strong>
+                        </span>
+                      </div>
+                      
+                      {streamingProgress.active && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6366f1', fontSize: 11, fontWeight: 500 }}>
+                          <RefreshCw size={12} className="spin" />
+                          <span>Đang stream dữ liệu cột: {streamingProgress.current} / {streamingProgress.total}...</span>
+                        </div>
+                      )}
+                      
+                      {!streamingProgress.active && previewData.column_count > 50 && (
+                        <span style={{ color: '#10b981', fontSize: 11, fontWeight: 500 }}>
+                          ✓ Đã tải hoàn toàn {previewData.column_count} cột mượt mà!
+                        </span>
+                      )}
+                    </div>
+
+                    <div style={{ overflowX: 'auto', border: '1px solid #1e293b', borderRadius: 8, background: '#070a14' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, textAlign: 'left' }}>
+                        <thead style={{ background: '#0a0f1e', borderBottom: '1px solid #1e293b' }}>
+                          <tr>
                             {previewData.columns.map(c => (
-                              <td key={c.name} style={{ padding: '12px 16px', color: '#cbd5e1', fontFamily: 'monospace' }}>
-                                {String(row[c.name] ?? '')}
-                              </td>
+                              <th key={c.name} style={{ padding: '12px 16px', fontWeight: 600, color: '#e2e8f0', borderBottom: '1px solid #1e293b', whiteSpace: 'nowrap' }}>
+                                <div>{c.name}</div>
+                                <div style={{ fontSize: 9, color: '#64748b', fontFamily: 'monospace', textTransform: 'uppercase', marginTop: 4 }}>{c.type}</div>
+                              </th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {previewData.rows.slice(0, 15).map((row, ri) => (
+                            <tr key={ri} style={{ borderBottom: '1px solid #1e293b', background: ri % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                              {previewData.columns.map(c => (
+                                <td key={c.name} style={{ padding: '12px 16px', color: '#cbd5e1', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                                  {row[c.name] !== undefined && row[c.name] !== null ? String(row[c.name]) : '—'}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </div>
             )}

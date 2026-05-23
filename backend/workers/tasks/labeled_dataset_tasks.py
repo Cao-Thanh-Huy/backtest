@@ -91,49 +91,80 @@ def generate_labeled_dataset_task(self: Task, labeled_dataset_id: str):
         # --- Download prepared Parquet from Data Prep ---
         self.update_state(state="PROGRESS", meta={"progress": 15, "message": "Downloading prepared dataset..."})
         bucket, key = parse_s3_uri(s3_prepared_path)
-        raw_bytes = download_bytes(bucket, key)
-        df_pl = pl.read_parquet(io.BytesIO(raw_bytes))
-        df_pd = df_pl.to_pandas()
-        feature_cols = list(df_pl.columns)  # all columns from prep = features
 
-        # --- Generate targets ---
-        self.update_state(state="PROGRESS", meta={
-            "progress": 30,
-            "message": f"Generating {len(targets_config)} target(s)...",
-            "step": "Target Generation",
-            "sub": {"done": 0, "total": len(targets_config)},
-        })
-
-        df_pd, target_cols = generate_targets(df_pd, targets_config)
-
-        self.update_state(state="PROGRESS", meta={
-            "progress": 70,
-            "message": f"Generated: {', '.join(target_cols)}",
-            "step": "Target Generation",
-        })
-
-        # --- Save to its own S3 path ---
-        self.update_state(state="PROGRESS", meta={"progress": 80, "message": "Uploading labeled dataset..."})
-
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".parquet")
-        os.close(tmp_fd)
+        tmp_in_fd, tmp_in_path = tempfile.mkstemp(suffix=".parquet")
+        os.close(tmp_in_fd)
         try:
-            df_out = pl.from_pandas(df_pd)
-            df_out.write_parquet(tmp_path)
-            del df_out, df_pd
+            # Download directly and save to disk
+            raw_bytes = download_bytes(bucket, key)
+            with open(tmp_in_path, "wb") as f:
+                f.write(raw_bytes)
+            del raw_bytes
             gc.collect()
 
+            self.update_state(state="PROGRESS", meta={
+                "progress": 30,
+                "message": "Generating targets separately via old Pandas flow...",
+                "step": "Target Generation",
+            })
+
+            # Read only 'close' column to compute returns (takes virtually 0 RAM!)
+            df_close = pl.read_parquet(tmp_in_path, columns=["close"])
+            
+            # Convert to Pandas just like the old flow, but only for the close column
+            df_pd_close = df_close.to_pandas()
+            
+            # Use the EXACT old target generation function!
+            df_pd_close, target_cols = generate_targets(df_pd_close, targets_config)
+            
+            # Drop NaN rows just like the old flow
+            df_pd_close = df_pd_close.dropna(subset=target_cols).reset_index(drop=True)
+
+            self.update_state(state="PROGRESS", meta={
+                "progress": 70,
+                "message": f"Generated: {', '.join(target_cols)}",
+                "step": "Target Generation",
+            })
+
+            # Convert target columns back to Polars
+            df_targets_pl = pl.from_pandas(df_pd_close[target_cols])
+
+            # Load the full Polars dataframe (extremely memory optimized compared to Pandas)
+            df_pl = pl.read_parquet(tmp_in_path)
+
+            # Slice the main dataframe to align with dropped NaNs from target calculation
+            df_pl = df_pl.head(len(df_targets_pl))
+
+            # Concat/horizontal append target columns to the main dataframe
+            df_pl = df_pl.with_columns(df_targets_pl)
+
+            feature_cols = [c for c in df_pl.columns if c not in target_cols and c != "timestamp"]
+
+            # Save the new parquet file back to S3
+            self.update_state(state="PROGRESS", meta={"progress": 80, "message": "Uploading labeled dataset..."})
             labeled_key = f"labeled/{labeled_dataset_id}/labeled.parquet"
-            with open(tmp_path, "rb") as fh:
-                s3_labeled_path = upload_file(
-                    settings.minio_bucket_processed,
-                    labeled_key,
-                    fh,
-                    "application/octet-stream",
-                )
+            
+            tmp_out_fd, tmp_out_path = tempfile.mkstemp(suffix=".parquet")
+            os.close(tmp_out_fd)
+            try:
+                df_pl.write_parquet(tmp_out_path)
+                with open(tmp_out_path, "rb") as fh:
+                    s3_labeled_path = upload_file(
+                        settings.minio_bucket_processed,
+                        labeled_key,
+                        fh,
+                        "application/octet-stream",
+                    )
+            finally:
+                if os.path.exists(tmp_out_path):
+                    os.unlink(tmp_out_path)
+
+            del df_pl, df_targets_pl, df_pd_close
+            gc.collect()
+
         finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            if os.path.exists(tmp_in_path):
+                os.unlink(tmp_in_path)
 
         # --- Update DB ---
         self.update_state(state="PROGRESS", meta={"progress": 95, "message": "Updating database..."})
@@ -144,6 +175,52 @@ def generate_labeled_dataset_task(self: Task, labeled_dataset_id: str):
             feature_columns=feature_cols,
             target_columns=target_cols,
         )
+
+        # Synchronize target columns and paths back to parent FeaturePipeline so they appear on Trang 2's UI
+        try:
+            with engine.begin() as conn:
+                pipeline_row = conn.execute(
+                    _text("""
+                        SELECT dp.pipeline_id 
+                        FROM labeled_datasets ld
+                        JOIN data_preparations dp ON dp.id = ld.data_prep_id
+                        WHERE ld.id = :lid
+                    """),
+                    {"lid": labeled_dataset_id},
+                ).fetchone()
+                
+                if pipeline_row:
+                    pipeline_id = pipeline_row[0]
+                    fp_row = conn.execute(
+                        _text("SELECT feature_columns FROM feature_pipelines WHERE id = :pid"),
+                        {"pid": pipeline_id}
+                    ).fetchone()
+                    
+                    if fp_row:
+                        import json
+                        val = fp_row[0]
+                        if isinstance(val, str):
+                            current_cols = json.loads(val or "[]")
+                        elif isinstance(val, list):
+                            current_cols = val
+                        else:
+                            current_cols = []
+                        new_cols = list(current_cols)
+                        for tc in target_cols:
+                            if tc not in new_cols:
+                                new_cols.append(tc)
+                        
+                        # Use a new connection transaction to ensure clean commit and transition pipeline to completed!
+                        conn.execute(
+                            _text("""
+                                UPDATE feature_pipelines
+                                SET feature_columns = :cols, s3_processed_path = :path, status = 'completed', progress = 100, updated_at = now()
+                                WHERE id = :pid
+                            """),
+                            {"cols": json.dumps(new_cols), "path": s3_labeled_path, "pid": pipeline_id}
+                        )
+        except Exception as sync_exc:
+            print(f"[SyncPipeline] Failed to sync target back to FeaturePipeline: {sync_exc}")
 
         return {
             "labeled_dataset_id": labeled_dataset_id,
@@ -158,6 +235,32 @@ def generate_labeled_dataset_task(self: Task, labeled_dataset_id: str):
             status="failed",
             error_message=str(exc),
         )
+        # Transition parent FeaturePipeline status to failed as well
+        try:
+            with engine.begin() as conn:
+                pipeline_row = conn.execute(
+                    _text("""
+                        SELECT dp.pipeline_id 
+                        FROM labeled_datasets ld
+                        JOIN data_preparations dp ON dp.id = ld.data_prep_id
+                        WHERE ld.id = :lid
+                    """),
+                    {"lid": labeled_dataset_id},
+                ).fetchone()
+                
+                if pipeline_row:
+                    pipeline_id = pipeline_row[0]
+                    conn.execute(
+                        _text("""
+                            UPDATE feature_pipelines
+                            SET status = 'failed', error_message = :err, updated_at = now()
+                            WHERE id = :pid
+                        """),
+                        {"err": f"Target Labeling Failed: {exc}", "pid": pipeline_id}
+                    )
+        except Exception as sync_err:
+            print(f"[SyncPipeline] Failed to mark pipeline as failed: {sync_err}")
+            
         if isinstance(exc, (ValueError, TypeError)):
             raise
         raise self.retry(exc=exc)

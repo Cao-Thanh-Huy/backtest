@@ -24,22 +24,48 @@ MAX_CHART_BARS = 5000
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _read_parquet_preview(s3_path: str, rows: int) -> dict:
-    """Download parquet from MinIO and return column schema + first N rows."""
+def _clean_nan_inf_pandas(rows_list: list[dict]) -> list[dict]:
+    """Thay thế mọi giá trị NaN, inf, -inf thành None (null trong JSON) bằng Python thuần túy."""
+    import math
+    if not rows_list:
+        return rows_list
+    return [
+        {
+            k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
+            for k, v in r.items()
+        }
+        for r in rows_list
+    ]
+
+
+def _read_parquet_preview(s3_path: str, rows: int, col_offset: int = 0, col_limit: int = 50) -> dict:
+    """Download parquet from MinIO and return column schema + first N rows with column selection."""
     bucket, key = parse_s3_uri(s3_path)
     raw = download_bytes(bucket, key)
     df = pl.read_parquet(io.BytesIO(raw))
-    schema = [{"name": c, "type": str(df.schema[c])} for c in df.columns]
+    
+    # Dynamic row capping based on column count to prevent browser freezes
+    actual_rows = rows
+    if len(df.columns) > 1000:
+        actual_rows = min(rows, 5)
+    elif len(df.columns) > 200:
+        actual_rows = min(rows, 10)
+
+    # Slice columns dynamically to support column streaming
+    columns_to_preview = df.columns[col_offset : col_offset + col_limit]
+    schema = [{"name": c, "type": str(df.schema[c])} for c in columns_to_preview]
 
     # Format datetime columns as ISO strings (truncate nanoseconds) for clean display
-    preview_df = df.head(rows)
+    preview_df = df.select(columns_to_preview).head(actual_rows)
+
     for col in preview_df.columns:
         if preview_df[col].dtype in (pl.Datetime, pl.Date):
             preview_df = preview_df.with_columns(
                 pl.col(col).cast(pl.Utf8).str.slice(0, 19).alias(col)
             )
 
-    rows_data = json.loads(json.dumps(preview_df.to_dicts(), default=str))
+    rows_raw = json.loads(json.dumps(preview_df.to_dicts(), default=str))
+    rows_data = _clean_nan_inf_pandas(rows_raw)
     return {
         "row_count": len(df),
         "column_count": len(df.columns),
@@ -359,7 +385,13 @@ async def get_dataset(dataset_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{dataset_id}/preview")
-async def preview_dataset(dataset_id: UUID, rows: int = 200, db: AsyncSession = Depends(get_db)):
+async def preview_dataset(
+    dataset_id: UUID, 
+    rows: int = 200, 
+    col_offset: int = 0, 
+    col_limit: int = 50, 
+    db: AsyncSession = Depends(get_db)
+):
     """Return column schema + first N rows of the raw parquet file."""
     dataset = await db.get(Dataset, dataset_id)
     if not dataset:
@@ -367,7 +399,7 @@ async def preview_dataset(dataset_id: UUID, rows: int = 200, db: AsyncSession = 
     if not dataset.s3_raw_path:
         raise HTTPException(status_code=404, detail="No raw file stored for this dataset")
     try:
-        return _read_parquet_preview(dataset.s3_raw_path, rows)
+        return _read_parquet_preview(dataset.s3_raw_path, rows, col_offset, col_limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Preview failed: {exc}")
 

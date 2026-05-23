@@ -971,6 +971,66 @@ def generate_features(
         if df[col].dtype.kind == 'f':
             df[col] = df[col].astype(np.float32)
 
+    # --- Auto-target Extraction & Pre-computation ---
+    target_config = None
+    target_cols = []
+    target_arrays = {}
+    valid_len = len(df)
+    df_close_tmp = None
+
+    for ind in indicators:
+        if isinstance(ind, dict) and ind.get("name") == "target_config":
+            target_config = ind
+            break
+
+    if target_config:
+        horizon = int(target_config.get("horizon", 15))
+        task_type = target_config.get("task_type", "classification")
+        target_name = f"y_{task_type}_{horizon}"
+        if task_type == "classification":
+            t_config = [{
+                "name": target_name,
+                "method": "n_bar",
+                "params": {
+                    "shift": horizon,
+                    "type": "classification",
+                    "bins": [-1e100, 0.0, 1e100]
+                }
+            }]
+        else:
+            t_config = [{
+                "name": target_name,
+                "method": "n_bar",
+                "params": {
+                    "shift": horizon,
+                    "type": "regression"
+                }
+            }]
+        
+        # Calculate targets on minimal close DataFrame
+        df_close_tmp = df[["close"]].copy()
+        df_close_tmp, target_cols = generate_targets(df_close_tmp, t_config)
+        df_close_tmp_clean = df_close_tmp.dropna(subset=target_cols)
+        valid_len = len(df_close_tmp_clean)
+        
+        for col in target_cols:
+            target_arrays[col] = df_close_tmp[col].iloc[:valid_len].to_numpy(dtype=np.float32)
+
+    # --- Dynamic Warmup / Lags Period Detection ---
+    max_warmup = 0
+    for ind in indicators:
+        if not isinstance(ind, dict) or ind.get("name") == "target_config":
+            continue
+        params = ind.get("params", {})
+        length = params.get("length") or params.get("period") or params.get("n")
+        if length and isinstance(length, int):
+            max_warmup = max(max_warmup, length - 1)
+
+    if lags:
+        max_warmup = max(max_warmup, max(lags))
+
+    real_max_warmup = max_warmup
+
     # Dictionary to accumulate all calculated feature columns as raw NumPy arrays
     all_features_dict = {}
     generated_cols: list[str] = []
@@ -996,6 +1056,8 @@ def generate_features(
     from collections import defaultdict
     family_map: dict[str, list[dict]] = defaultdict(list)
     for ind in indicators:
+        if isinstance(ind, dict) and ind.get("name") == "target_config":
+            continue
         family_map[ind["name"].lower()].append(ind)
 
     families = list(family_map.keys())
@@ -1063,6 +1125,9 @@ def generate_features(
                         arr = df_base[col].to_numpy()
                         if arr.dtype.kind == 'f':
                             arr = arr.astype(np.float32)
+                            valid_indices = np.where(~np.isnan(arr))[0]
+                            if len(valid_indices) > 0:
+                                real_max_warmup = max(real_max_warmup, int(valid_indices[0]))
                         all_features_dict[col] = arr
 
                         # If writing progressively, calculate lags immediately to keep chunk sizes uniform
@@ -1073,6 +1138,9 @@ def generate_features(
                                     lag_arr = _fast_shift_1d(arr, lag)
                                     if lag_arr.dtype.kind == 'f':
                                         lag_arr = lag_arr.astype(np.float32)
+                                        valid_indices = np.where(~np.isnan(lag_arr))[0]
+                                        if len(valid_indices) > 0:
+                                            real_max_warmup = max(real_max_warmup, int(valid_indices[0]))
                                     all_features_dict[lag_col] = lag_arr
                                     generated_cols.append(lag_col)
                                     generated_seen.add(lag_col)
@@ -1144,6 +1212,9 @@ def generate_features(
                     arr = _fast_shift_1d(all_features_dict[col], lag)
                     if arr.dtype.kind == 'f':
                         arr = arr.astype(np.float32)
+                        valid_indices = np.where(~np.isnan(arr))[0]
+                        if len(valid_indices) > 0:
+                            real_max_warmup = max(real_max_warmup, int(valid_indices[0]))
                     all_features_dict[lag_col] = arr
                     
                     generated_cols.append(lag_col)
@@ -1156,6 +1227,15 @@ def generate_features(
             del features_df
             all_features_dict.clear()
             gc.collect()
+
+        if target_config:
+            # Append target columns
+            for col in target_cols:
+                df[col] = df_close_tmp[col].astype(np.float32)
+            generated_cols = generated_cols + target_cols
+
+        # Slice dataset to drop real_max_warmup and target NaNs
+        df = df.iloc[real_max_warmup : valid_len].reset_index(drop=True)
 
         # Final safety cast pass to make sure everything is float32
         for col in df.columns:
@@ -1170,14 +1250,28 @@ def generate_features(
         
         # Read base table first
         combined_table = pq.read_table(temp_files[0])
+        combined_table = combined_table.slice(real_max_warmup, valid_len - real_max_warmup)
         
         # Metadata-only zero-copy column joining from other chunks
         for path in temp_files[1:]:
             chunk_table = pq.read_table(path)
+            chunk_table = chunk_table.slice(real_max_warmup, valid_len - real_max_warmup)
             for col_name in chunk_table.column_names:
                 combined_table = combined_table.append_column(col_name, chunk_table[col_name])
             del chunk_table
             gc.collect()
+
+        # Join pre-computed target columns
+        if target_config:
+            sliced_target_arrays = {
+                col: arr[real_max_warmup:] for col, arr in target_arrays.items()
+            }
+            targets_table = pa.Table.from_pydict(sliced_target_arrays)
+            for col_name in targets_table.column_names:
+                combined_table = combined_table.append_column(col_name, targets_table[col_name])
+            del targets_table
+            gc.collect()
+            generated_cols = generated_cols + target_cols
 
         # Write combined Table to Parquet (very low RAM footprint)
         pq.write_table(combined_table, output_parquet_path)
@@ -1221,7 +1315,15 @@ def generate_target_nbar(
 
     if target_type == "classification":
         _bins = bins or [-np.inf, -0.005, 0.005, np.inf]
-        df[name] = pd.cut(fwd_return, bins=_bins, labels=[-1, 0, 1]).astype(float)
+        # Dynamically allocate labels depending on bin count to avoid pd.cut ValueError
+        if len(_bins) == 3:
+            _labels = [0, 1]
+        elif len(_bins) == 4:
+            _labels = [-1, 0, 1]
+        else:
+            _labels = list(range(len(_bins) - 1))
+            
+        df[name] = pd.cut(fwd_return, bins=_bins, labels=_labels).astype(float)
 
     return df
 

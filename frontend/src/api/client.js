@@ -93,7 +93,7 @@ export const clonePipeline = (id, data) => request(`/v1/pipelines/${id}/clone`, 
 export const togglePipelineEnabled = (id) => request(`/v1/pipelines/${id}/toggle-enabled`, { method: 'POST' });
 export const preflightFeaturePipeline = (data) => request('/v1/pipelines/preflight', { method: 'POST', body: JSON.stringify(data) });
 export const generateFeaturePipeline = (data) => request('/v1/pipelines/generate', { method: 'POST', body: JSON.stringify(data) });
-export const getFeaturePipelinePreview = (id, rows = 200) => request(`/v1/pipelines/${id}/preview?rows=${rows}`);
+export const getFeaturePipelinePreview = (id, rows = 200, colOffset = 0, colLimit = 50) => request(`/v1/pipelines/${id}/preview?rows=${rows}&col_offset=${colOffset}&col_limit=${colLimit}`);
 export const getFeaturePipelineDownload = (id) => request(`/v1/pipelines/${id}/download`);
 export const cancelPipeline = (id) => request(`/v1/pipelines/${id}/cancel`, { method: 'POST' });
 
@@ -266,7 +266,7 @@ export const lineageGetImpact = (id) => request(`/lineage/impact/${id}`);
 // ── Market Datasets (Market Intake) ──────────────────────────────────────────
 export const listDatasets = () => request('/v1/datasets/');
 export const getDataset = (id) => request(`/v1/datasets/${id}`);
-export const previewDataset = (id, rows = 200) => request(`/v1/datasets/${id}/preview?rows=${rows}`);
+export const previewDataset = (id, rows = 200, colOffset = 0, colLimit = 50) => request(`/v1/datasets/${id}/preview?rows=${rows}&col_offset=${colOffset}&col_limit=${colLimit}`);
 export const getDatasetStats = (id) => request(`/v1/datasets/${id}/stats`);
 export const getDatasetDownloadUrl = (id) => request(`/v1/datasets/${id}/download`);
 export const deleteDataset = (id) => request(`/v1/datasets/${id}`, { method: 'DELETE' });
@@ -306,5 +306,15 @@ export function connectTaskWS(taskId, onMessage, onDone, hooks) {
 
   return ws;
 }
+
+// ── Feature Selection (Page 3) ────────────────────────────────────────────────
+export const listLabeledDatasets = () => request('/v1/labeled-datasets/');
+export const listFeatureSets = () => request('/v1/feature-sets/');
+export const getFeatureSet = (id) => request(`/v1/feature-sets/${id}`);
+export const createFeatureSet = (data) => request('/v1/feature-sets/', { method: 'POST', body: JSON.stringify(data) });
+export const deleteFeatureSet = (id) => request(`/v1/feature-sets/${id}`, { method: 'DELETE' });
+export const previewFeatureSet = (id, rows = 200, colOffset = 0, colLimit = 50) => request(`/v1/feature-sets/${id}/preview?rows=${rows}&col_offset=${colOffset}&col_limit=${colLimit}`);
+export const suggestFeatureColumns = (data) => request('/v1/feature-sets/suggest', { method: 'POST', body: JSON.stringify(data) });
+
 
 

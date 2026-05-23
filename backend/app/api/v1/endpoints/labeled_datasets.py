@@ -102,10 +102,26 @@ async def delete_labeled_dataset(labeled_dataset_id: UUID, db: AsyncSession = De
     await db.commit()
 
 
+def _clean_nan_inf_pandas(rows_list: list[dict]) -> list[dict]:
+    """Thay thế mọi giá trị NaN, inf, -inf thành None (null trong JSON) bằng Python thuần túy."""
+    import math
+    if not rows_list:
+        return rows_list
+    return [
+        {
+            k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
+            for k, v in r.items()
+        }
+        for r in rows_list
+    ]
+
+
 @router.get("/{labeled_dataset_id}/preview")
 async def preview_labeled_dataset(
     labeled_dataset_id: UUID,
     rows: int = 200,
+    col_offset: int = 0,
+    col_limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
     """Return column schema + first N rows of the labeled parquet."""
@@ -121,14 +137,25 @@ async def preview_labeled_dataset(
         bucket, key = parse_s3_uri(ld.s3_labeled_path)
         raw = download_bytes(bucket, key)
         df = pl.read_parquet(io.BytesIO(raw))
-        schema = [{"name": c, "type": str(df.schema[c])} for c in df.columns]
-        rows_data = df.head(rows).to_dicts()
+        
+        # Dynamic row capping based on column count to prevent browser freezes
+        actual_rows = rows
+        if len(df.columns) > 1000:
+            actual_rows = min(rows, 5)
+        elif len(df.columns) > 200:
+            actual_rows = min(rows, 10)
+
+        # Slice columns dynamically to support column streaming
+        columns_to_preview = df.columns[col_offset : col_offset + col_limit]
+        schema = [{"name": c, "type": str(df.schema[c])} for c in columns_to_preview]
+        rows_data = df.select(columns_to_preview).head(actual_rows).to_dicts()
         rows_str = json.loads(json.dumps(rows_data, default=str))
+        rows_clean = _clean_nan_inf_pandas(rows_str)
         return {
             "row_count": len(df),
             "column_count": len(df.columns),
             "columns": schema,
-            "rows": rows_str,
+            "rows": rows_clean,
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Preview failed: {exc}")

@@ -4,7 +4,7 @@ import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-do
 import {
   LayoutDashboard, Database, GitBranch, Play, Search,
   HardDrive, Settings, ChevronRight, ChevronLeft, Menu, HeartPulse, Plug, ShieldCheck, LogOut, Zap,
-  ClipboardList
+  ClipboardList, Sliders
 } from 'lucide-react'
 
 import ModelManager from './pages/ModelManager'
@@ -19,6 +19,7 @@ import IAMManager from './pages/IAMManager'
 import LineageExplorer from './pages/LineageExplorer'
 import LoginPage from './pages/LoginPage'
 import FeatureFactory from './pages/FeatureFactory'
+import FeatureSelection from './pages/FeatureSelection'
 import { authStore } from './auth/authStore'
 import { iamGetMe } from './api/client'
 
@@ -30,6 +31,7 @@ const getNavItems = (perms) => [
   ...(perms.has('manage_pipelines') ? [
     { path: '/intake', icon: ClipboardList, label: 'Market Intake & Setup' },
     { path: '/feature-factory', icon: Zap, label: 'Feature Factory' },
+    { path: '/feature-selection', icon: Sliders, label: 'Feature Selection' },
   ] : []),
   // Connectors: visible only with manage_connectors
   ...(perms.has('manage_connectors') ? [
@@ -184,6 +186,12 @@ export default function App() {
               } />
               <Route path="/feature-factory/:id" element={
                 <RequireAuth><PermissionRoute permission="manage_pipelines" perms={perms} element={<FeatureFactory />} /></RequireAuth>
+              } />
+              <Route path="/feature-selection" element={
+                <RequireAuth><PermissionRoute permission="manage_pipelines" perms={perms} element={<FeatureSelection />} /></RequireAuth>
+              } />
+              <Route path="/feature-selection/:id" element={
+                <RequireAuth><PermissionRoute permission="manage_pipelines" perms={perms} element={<FeatureSelection />} /></RequireAuth>
               } />
               <Route path="/pipelines" element={<Navigate to="/intake" replace />} />
               <Route path="/pipelines/:id" element={<Navigate to="/intake" replace />} />

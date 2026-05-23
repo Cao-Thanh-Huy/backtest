@@ -173,6 +173,12 @@ def generate_pipeline_task(self: Task, pipeline_id: str):
                 os.unlink(tmp_path)
 
         # --- 5. Update DB ---
+        target_config = None
+        for ind in indicators:
+            if isinstance(ind, dict) and ind.get("name") == "target_config":
+                target_config = ind
+                break
+
         safe_update_state(95, "Updating database...")
         _update_pipeline_state(
             pipeline_id,
@@ -180,6 +186,91 @@ def generate_pipeline_task(self: Task, pipeline_id: str):
             s3_processed_path=s3_processed_path,
             feature_columns=feature_cols,
         )
+
+        if target_config:
+            safe_update_state(96, "Auto-chaining Data Preparation and Target Labeling (Single-Pass)...")
+            import uuid
+            from sqlalchemy import create_engine as _ce, text
+
+            horizon = int(target_config.get("horizon", 15))
+            task_type = target_config.get("task_type", "classification")
+
+            prep_id = uuid.uuid4()
+            labeled_id = uuid.uuid4()
+
+            sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
+            engine_db = _ce(sync_url)
+            with engine_db.begin() as conn:
+                # 1. Fetch dataset_id and name of pipeline
+                fp_row = conn.execute(
+                    text("SELECT dataset_id, name FROM feature_pipelines WHERE id = :pid"),
+                    {"pid": pipeline_id}
+                ).fetchone()
+
+                if fp_row:
+                    dataset_id, pipeline_name = fp_row
+
+                    # 2. Insert DataPreparation (completed status since we reuse the same parquet file!)
+                    conn.execute(
+                        text("""
+                            INSERT INTO data_preparations (id, dataset_id, pipeline_id, name, alignment_config, cleaning_config, missing_value_config, normalization_config, s3_prepared_path, status, created_at, updated_at)
+                            VALUES (:id, :dataset_id, :pipeline_id, :name, :align, :clean, :missing, :norm, :path, 'completed', now(), now())
+                        """),
+                        {
+                            "id": prep_id,
+                            "dataset_id": dataset_id,
+                            "pipeline_id": pipeline_id,
+                            "name": f"{pipeline_name}_prep",
+                            "align": "{}",
+                            "clean": "{}",
+                            "missing": "{}",
+                            "norm": "{}",
+                            "path": s3_processed_path
+                        }
+                    )
+
+                    # 3. Construct targets config
+                    target_name = f"y_{task_type}_{horizon}"
+                    if task_type == "classification":
+                        t_config = [{
+                            "name": target_name,
+                            "method": "n_bar",
+                            "params": {
+                                "shift": horizon,
+                                "type": "classification",
+                                "bins": [-1e100, 0.0, 1e100]
+                            }
+                        }]
+                    else:
+                        t_config = [{
+                            "name": target_name,
+                            "method": "n_bar",
+                            "params": {
+                                "shift": horizon,
+                                "type": "regression"
+                            }
+                        }]
+
+                    # 4. Insert LabeledDataset (completed status directly!)
+                    target_cols_list = [target_name]
+                    feature_cols_list = [c for c in feature_cols if c != target_name]
+                    conn.execute(
+                        text("""
+                            INSERT INTO labeled_datasets (id, data_prep_id, name, targets_config, target_columns, feature_columns, s3_labeled_path, status, created_at, updated_at)
+                            VALUES (:id, :prep_id, :name, :targets_config, :target_columns, :feature_columns, :s3_labeled_path, 'completed', now(), now())
+                        """),
+                        {
+                            "id": labeled_id,
+                            "prep_id": prep_id,
+                            "name": f"{pipeline_name} (Target: {horizon} nến {'Up/Down' if task_type == 'classification' else 'Return'})",
+                            "targets_config": _json.dumps(t_config),
+                            "target_columns": _json.dumps(target_cols_list),
+                            "feature_columns": _json.dumps(feature_cols_list),
+                            "s3_labeled_path": s3_processed_path
+                        }
+                    )
+            engine_db.dispose()
+            safe_update_state(98, "Successfully completed single-pass target labeling pipeline!")
 
         return {
             "pipeline_id": pipeline_id,

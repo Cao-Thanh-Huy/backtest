@@ -100,50 +100,65 @@ const getTimelineSteps = (pipeline) => {
   const progress = pipeline.progress || 0
   const message = pipeline.progress_message || ''
 
-  // Step 1: Init
-  let step1 = { status: 'pending', desc: 'Waiting to start...', time: null }
-  // Step 2: Math Sweep
-  let step2 = { status: 'pending', desc: 'Waiting to start math engine...', time: null }
-  // Step 3: Lags
-  let step3 = { status: 'pending', desc: 'Waiting for feature completion...', time: null }
-  // Step 4: Storage
-  let step4 = { status: 'pending', desc: 'Waiting for Parquet serialization...', time: null }
+  // STEP 1: Initialization & Target Generation
+  let step1 = { status: 'pending', desc: 'Waiting to load source dataset and extract targets...', time: null }
+  // STEP 2: Advanced Math Indicator Sweeps (RSI 2 to 100)
+  let step2 = { status: 'pending', desc: 'Waiting to start advanced math calculations...', time: null }
+  // STEP 3: Temporal Lag Transformations
+  let step3 = { status: 'pending', desc: 'Waiting to calculate shift lags on feature columns...', time: null }
+  // STEP 4: Zero-Copy Column Joining & Warmup/Target Slicing
+  let step4 = { status: 'pending', desc: 'Waiting to trim null boundaries and execute zero-copy merge...', time: null }
+  // STEP 5: Parquet Serialization & MinIO Upload
+  let step5 = { status: 'pending', desc: 'Waiting to compile final dataset and upload to MinIO lake...', time: null }
 
   if (status === 'completed') {
-    step1 = { status: 'completed', desc: 'Successfully loaded source market data from database.' }
-    step2 = { status: 'completed', desc: 'Successfully generated 99 RSI indicator variants (2 to 100).' }
-    step3 = { status: 'completed', desc: `Successfully calculated ${pipeline.lags?.length || 0} lag transformations.` }
-    step4 = { status: 'completed', desc: `Parquet dataset written successfully to MinIO processed bucket.` }
+    step1 = { status: 'completed', desc: 'Successfully loaded source market data and pre-computed target labels.' }
+    step2 = { status: 'completed', desc: 'Calculated all indicators from length 2 to 100. Longest indicator warmup window identified.' }
+    step3 = { status: 'completed', desc: `Successfully generated ${pipeline.lags?.length || 0} lag transformations on features.` }
+    step4 = { status: 'completed', desc: 'Removed starting warmup null rows and trailing target shift nulls. Combined columns with zero-copy progressive PyArrow.' }
+    step5 = { status: 'completed', desc: 'Parquet dataset serialized and uploaded to MinIO storage bucket successfully.' }
   } else if (status === 'failed') {
     step1 = { status: 'completed', desc: 'Successfully loaded source market data.' }
-    if (progress > 30) {
-      step2 = { status: 'completed', desc: 'Math engine finished calculation.' }
-      if (progress > 80) {
-        step3 = { status: 'completed', desc: 'Lag transformations generated.' }
-        step4 = { status: 'failed', desc: 'Failed to write Parquet dataset to MinIO bucket (Storage Error).' }
+    if (progress > 15) {
+      step1 = { status: 'completed', desc: 'Successfully computed target labels.' }
+      if (progress > 30) {
+        step2 = { status: 'completed', desc: 'Math indicator sweeps finished calculation.' }
+        if (progress > 80) {
+          step3 = { status: 'completed', desc: 'Lag transformations generated.' }
+          if (progress > 93) {
+            step4 = { status: 'completed', desc: 'Warmup slicing and progressive column joining completed.' }
+            step5 = { status: 'failed', desc: 'Failed to write Parquet dataset to MinIO bucket (Storage Error).' }
+          } else {
+            step4 = { status: 'failed', desc: 'Pipeline failed during progressive column merging or row trimming.' }
+          }
+        } else {
+          step3 = { status: 'failed', desc: 'Pipeline failed during lag step generation.' }
+        }
       } else {
-        step3 = { status: 'failed', desc: 'Pipeline interrupted during lag step generation.' }
-        step4 = { status: 'pending', desc: 'Storage commit aborted.' }
+        step2 = { status: 'failed', desc: 'Pipeline failed during indicator sweep calculation.' }
       }
     } else {
-      step2 = { status: 'failed', desc: 'Calculation aborted due to system memory limit or timeout.' }
-      step3 = { status: 'pending', desc: 'Lag calculations aborted.' }
-      step4 = { status: 'pending', desc: 'Storage commit aborted.' }
+      step1 = { status: 'failed', desc: 'Pipeline failed during initialization or target extraction.' }
     }
   } else if (status === 'running') {
-    if (progress <= 25) {
-      step1 = { status: 'running', desc: message || 'Querying database for source dataset...' }
+    if (progress <= 15) {
+      step1 = { status: 'running', desc: message || 'Extracting target configs and generating forward return labels...' }
     } else {
-      step1 = { status: 'completed', desc: 'Successfully loaded source market data.' }
+      step1 = { status: 'completed', desc: 'Target label columns computed.' }
       if (progress <= 80) {
         step2 = { status: 'running', desc: message || `Generating RSI sweeps (${progress}% completed)...` }
       } else {
-        step2 = { status: 'completed', desc: 'Successfully generated 99 RSI indicator variants (2 to 100).' }
+        step2 = { status: 'completed', desc: 'Calculated all indicators from length 2 to 100.' }
         if (progress <= 94) {
           step3 = { status: 'running', desc: message || 'Generating lag transformation columns...' }
         } else {
-          step3 = { status: 'completed', desc: 'Calculated lag transformations.' }
-          step4 = { status: 'running', desc: message || 'Writing Parquet to MinIO storage...' }
+          step3 = { status: 'completed', desc: 'Generated all lag transformations.' }
+          if (progress <= 96) {
+            step4 = { status: 'running', desc: message || 'Trimming starting warmup nulls & trailing target shift nulls. Merging columns...' }
+          } else {
+            step4 = { status: 'completed', desc: 'Warmup slicing and progressive column joining completed.' }
+            step5 = { status: 'running', desc: message || 'Writing Parquet and uploading to MinIO storage...' }
+          }
         }
       }
     }
@@ -152,10 +167,11 @@ const getTimelineSteps = (pipeline) => {
   }
 
   return [
-    { title: 'Pipeline Initialization & Data Loading', ...step1, stepNum: 'STEP 1' },
+    { title: 'Auto-Target Extraction & Label Generation', ...step1, stepNum: 'STEP 1' },
     { title: 'Advanced Math Indicator Sweeps (RSI 2 to 100)', ...step2, stepNum: 'STEP 2' },
     { title: 'Temporal Lag Transformations', ...step3, stepNum: 'STEP 3' },
-    { title: 'Parquet Serialization & Data Lake Storage', ...step4, stepNum: 'STEP 4' },
+    { title: 'Zero-Copy Column Joining & Warmup/Target Slicing', ...step4, stepNum: 'STEP 4' },
+    { title: 'Parquet Serialization & MinIO Upload', ...step5, stepNum: 'STEP 5' },
   ]
 }
 
@@ -189,20 +205,20 @@ function StatusBadge({ status, progress, progressMessage, isTable, errorMessage 
       </span>
       {showProgress && (
         <div style={{ width: 120, height: 6, background: '#1e293b', borderRadius: 3, overflow: 'hidden', position: 'relative', marginTop: 4 }}>
-          <div 
-            style={{ 
-              width: `${progress}%`, 
-              height: '100%', 
-              background: '#3b82f6', 
+          <div
+            style={{
+              width: `${progress}%`,
+              height: '100%',
+              background: '#3b82f6',
               borderRadius: 3,
               transition: 'width 0.4s ease-out',
               boxShadow: '0 0 8px rgba(59,130,246,0.6)'
-            }} 
+            }}
           />
         </div>
       )}
       {statusLower === 'running' && progressMessage && (
-        <div 
+        <div
           style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}
           title={progressMessage}
         >
@@ -265,10 +281,10 @@ export default function FeatureFactory() {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [cancelingId, setCancelingId] = useState(null)
   const [confirmCancelId, setConfirmCancelId] = useState(null)
-  
+
   // Search & Filter (List view)
   const [searchQuery, setSearchQuery] = useState('')
-  
+
   // Form States (Inside drawer)
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [pipelineName, setPipelineName] = useState('')
@@ -287,10 +303,14 @@ export default function FeatureFactory() {
   const [includePersistence, setIncludePersistence] = useState(true)
   const [includeCrossovers, setIncludeCrossovers] = useState(true)
   const [selectedIndicator, setSelectedIndicator] = useState('RSI')
+  const [autoGenerateTarget, setAutoGenerateTarget] = useState(true)
+  const [predictionHorizon, setPredictionHorizon] = useState(15)
+  const [targetTaskType, setTargetTaskType] = useState('classification')
 
   // Details States (Profile view)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewData, setPreviewData] = useState(null)
+  const [streamingProgress, setStreamingProgress] = useState({ current: 0, total: 0, active: false })
   const [featuresSearchQuery, setFeaturesSearchQuery] = useState('')
   const [ramHistories, setRamHistories] = useState({})
 
@@ -383,26 +403,84 @@ export default function FeatureFactory() {
     }
   }, [activeDataset, selectedIndicator])
 
-  // Load preview data when entering Profile View and preview tab is active
+  // Load preview data when entering Profile View and preview tab is active with Column Streaming
   useEffect(() => {
     if (!selectedPipeline || selectedPipeline.status !== 'completed') return
+
+    let isMounted = true
 
     const fetchPreview = async () => {
       setPreviewLoading(true)
       setPreviewData(null)
+      setStreamingProgress({ current: 0, total: 0, active: false })
+
+      // 1. Fetch first batch (0 to 50 columns) for instant preview
+      let firstBatch = null
       try {
-        const p = await api.getFeaturePipelinePreview(selectedPipeline.id, 15)
-        setPreviewData(p)
+        firstBatch = await api.getFeaturePipelinePreview(selectedPipeline.id, 15, 0, 50)
+        if (isMounted) {
+          setPreviewData(firstBatch)
+          setStreamingProgress({
+            current: firstBatch.columns ? firstBatch.columns.length : 0,
+            total: firstBatch.column_count || 0,
+            active: (firstBatch.column_count || 0) > (firstBatch.columns ? firstBatch.columns.length : 0)
+          })
+        }
       } catch (e) {
-        console.error(e)
-        showToast('Failed to preview Parquet data', 'error')
+        console.error("Error loading preview batch 1:", e)
+        if (isMounted) showToast('Failed to preview Parquet data', 'error')
       } finally {
-        setPreviewLoading(false)
+        if (isMounted) setPreviewLoading(false)
+      }
+
+      // 2. Stream remaining column batches asynchronously in the background
+      if (firstBatch && firstBatch.column_count > 50) {
+        const totalCols = firstBatch.column_count
+        let currentOffset = 50
+        const limit = 50
+
+        while (currentOffset < totalCols && isMounted) {
+          try {
+            const nextBatch = await api.getFeaturePipelinePreview(selectedPipeline.id, 15, currentOffset, limit)
+            if (!isMounted) break
+
+            setPreviewData(prev => {
+              if (!prev) return nextBatch
+              const newCols = [...prev.columns, ...(nextBatch.columns || [])]
+              const newRows = prev.rows.map((row, ri) => ({
+                ...row,
+                ...(nextBatch.rows[ri] || {})
+              }))
+              return {
+                ...prev,
+                columns: newCols,
+                rows: newRows
+              }
+            })
+
+            currentOffset += limit
+            setStreamingProgress({
+              current: Math.min(currentOffset, totalCols),
+              total: totalCols,
+              active: currentOffset < totalCols
+            })
+
+            // Short sleep to throttle background requests & keep UI thread responsive
+            await new Promise(resolve => setTimeout(resolve, 50))
+          } catch (err) {
+            console.error("Error streaming pipeline columns:", err)
+            await new Promise(resolve => setTimeout(resolve, 500))
+          }
+        }
       }
     }
 
     if (detailTab === 'preview') {
       fetchPreview()
+    }
+
+    return () => {
+      isMounted = false
     }
   }, [selectedPipeline, detailTab])
 
@@ -420,10 +498,10 @@ export default function FeatureFactory() {
     const min = parseInt(rsiMin) || 2
     const max = parseInt(rsiMax) || 100
     const step = parseInt(rsiStep) || 1
-    
+
     // Number of RSI periods
     const rsiCycles = Math.max(1, Math.floor((max - min) / step) + 1)
-    
+
     // Width (columns per cycle)
     let width = 1
     if (includeThreshold) width += 2
@@ -436,7 +514,7 @@ export default function FeatureFactory() {
     if (includeStatistical) width += 4
     if (includePersistence) width += 4
     if (includeCrossovers) width += 3
-    
+
     // Lags count
     const lagList = lagsInput
       .split(',')
@@ -444,9 +522,12 @@ export default function FeatureFactory() {
       .filter(x => x && !isNaN(x))
       .map(Number)
     const lagsCount = lagList.length
-    
+
     const baseColumns = rsiCycles * width
-    const totalColumns = baseColumns * (1 + lagsCount)
+    let totalColumns = baseColumns * (1 + lagsCount)
+    if (autoGenerateTarget) {
+      totalColumns += 1
+    }
 
     return {
       rsiCycles,
@@ -455,7 +536,7 @@ export default function FeatureFactory() {
       totalColumns,
       overLimit: totalColumns > 10000
     }
-  }, [rsiMin, rsiMax, rsiStep, includeThreshold, includeTrend, includeRawExtras, includeMultiZone, includeMomentumSlope, includeDivergence, includeTrendStructure, includeStatistical, includePersistence, includeCrossovers, lagsInput, selectedIndicator])
+  }, [rsiMin, rsiMax, rsiStep, includeThreshold, includeTrend, includeRawExtras, includeMultiZone, includeMomentumSlope, includeDivergence, includeTrendStructure, includeStatistical, includePersistence, includeCrossovers, lagsInput, selectedIndicator, autoGenerateTarget])
 
   // Create Pipeline action
   const handleCreatePipeline = async (e) => {
@@ -507,6 +588,15 @@ export default function FeatureFactory() {
         lags: lagList
       }
 
+      if (autoGenerateTarget) {
+        payload.indicators.push({
+          name: 'target_config',
+          auto_generate: true,
+          horizon: parseInt(predictionHorizon),
+          task_type: targetTaskType
+        })
+      }
+
       await api.generateFeaturePipeline(payload)
       showToast('Feature generation process initiated!', 'success')
       setDrawerOpen(false)
@@ -528,6 +618,9 @@ export default function FeatureFactory() {
       setIncludeStatistical(true)
       setIncludePersistence(true)
       setIncludeCrossovers(true)
+      setAutoGenerateTarget(true)
+      setPredictionHorizon(15)
+      setTargetTaskType('classification')
     } catch (err) {
       showToast(err.message || 'Failed to create feature pipeline', 'error')
     } finally {
@@ -546,7 +639,7 @@ export default function FeatureFactory() {
     try {
       // Find BTCUSDT 1m dataset as standard sample if possible, otherwise any first dataset
       const sampleDs = datasets.find(d => d.symbol === 'BTCUSDT' && d.timeframe === '1m') || datasets[0]
-      
+
       const payload = {
         dataset_id: sampleDs.id,
         name: `${sampleDs.symbol}_${sampleDs.timeframe}_rsi_pipeline_sample`,
@@ -572,13 +665,19 @@ export default function FeatureFactory() {
                 step: 1
               }
             }
+          },
+          {
+            name: 'target_config',
+            auto_generate: true,
+            horizon: 15,
+            task_type: 'classification'
           }
         ],
         lags: [1]
       }
 
       await api.generateFeaturePipeline(payload)
-      showToast('Kích hoạt tiến trình tạo feature mẫu thành công!', 'success')
+      showToast('Kích hoạt tiến trình tạo feature mẫu và target tự động thành công!', 'success')
       loadAll()
     } catch (err) {
       showToast(err.message || 'Failed to generate sample feature pipeline', 'error')
@@ -770,7 +869,7 @@ export default function FeatureFactory() {
                 <X size={16} /> Cancel Running
               </button>
             )}
-            <button 
+            <button
               onClick={() => handleDeletePipeline(selectedPipeline.id)}
               style={{ ...S.btn('danger'), height: 44, padding: '0 20px', borderRadius: 12 }}
               disabled={deletingId === selectedPipeline.id}
@@ -849,12 +948,32 @@ export default function FeatureFactory() {
             {/* Tab content: PREVIEW */}
             {detailTab === 'preview' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {(() => {
+                  const configs = typeof selectedPipeline.indicators_config === 'string'
+                    ? JSON.parse(selectedPipeline.indicators_config)
+                    : selectedPipeline.indicators_config
+                  const hasTarget = Array.isArray(configs) && configs.some(ind => ind.name === 'target_config')
+                  if (!hasTarget || selectedPipeline.status !== 'completed') return null
+                  return (
+                    <div style={{
+                      background: 'rgba(99,102,241,0.08)',
+                      border: '1px solid rgba(99,102,241,0.25)',
+                      borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                      fontSize: 12, color: '#a5b4fc', marginBottom: 6, lineHeight: '1.5'
+                    }}>
+                      <Sparkles size={16} color="#fbbf24" style={{ flexShrink: 0 }} />
+                      <div>
+                        <strong>💡 Cấu hình Target thành công:</strong> Cột nhãn mục tiêu (Target <code>y</code>) đã được tính toán ngầm tự động và lưu tại tệp dữ liệu <strong>Labeled Dataset</strong> sạch sẽ. Cột <code>y</code> không xuất hiện tại trang này để giữ an toàn tránh rò rỉ dữ liệu (leakage). Vui lòng chuyển qua trang <strong>Feature Selection (Trang 3)</strong>, nhấp nút <strong>Run Feature Selection</strong> và chọn Labeled Dataset tương ứng để preview dữ liệu có cột <code>y</code> và chạy bộ lọc đặc trưng!
+                      </div>
+                    </div>
+                  )
+                })()}
                 {selectedPipeline.status !== 'completed' ? (
                   <div style={{ textAlign: 'center', padding: '60px 0', color: '#64748b', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                     <Clock size={40} className="spin" color="#fbbf24" />
                     <span>The feature dataset is currently being calculated on the backend. Please check back when completed.</span>
                   </div>
-                ) : previewLoading ? (
+                                ) : previewLoading ? (
                   <div style={{ textAlign: 'center', padding: '60px 0', color: '#64748b' }}>
                     <RefreshCw size={24} className="spin" style={{ margin: '0 auto 15px auto' }} />
                     Loading Parquet dataset from MinIO...
@@ -864,31 +983,62 @@ export default function FeatureFactory() {
                     No preview data available.
                   </div>
                 ) : (
-                  <div style={{ overflowX: 'auto', border: '1px solid #1e293b', borderRadius: 8, background: '#070a14' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, textAlign: 'left' }}>
-                      <thead style={{ background: '#0a0f1e', borderBottom: '1px solid #1e293b' }}>
-                        <tr>
-                          {previewData.columns.map(c => (
-                            <th key={c.name} style={{ padding: '12px 16px', fontWeight: 600, color: '#e2e8f0', borderBottom: '1px solid #1e293b', whiteSpace: 'nowrap' }}>
-                              <div>{c.name}</div>
-                              <div style={{ fontSize: 9, color: '#64748b', fontFamily: 'monospace', textTransform: 'uppercase', marginTop: 4 }}>{c.type}</div>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {previewData.rows.map((row, ri) => (
-                          <tr key={ri} style={{ borderBottom: '1px solid #1e293b', background: ri % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                  <>
+                    {/* Metadata Box & Streaming Progress */}
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      background: '#0d1527', border: '1px solid #1e293b', padding: '12px 16px',
+                      borderRadius: 8, fontSize: 12, marginBottom: 12
+                    }}>
+                      <div style={{ display: 'flex', gap: 20 }}>
+                        <span style={{ color: '#94a3b8' }}>
+                          Tổng số dòng: <strong style={{ color: '#10b981' }}>{previewData.row_count?.toLocaleString() || '—'}</strong>
+                        </span>
+                        <span style={{ color: '#94a3b8' }}>
+                          Tổng số cột: <strong style={{ color: '#6366f1' }}>{previewData.column_count?.toLocaleString() || '—'}</strong>
+                        </span>
+                      </div>
+                      
+                      {streamingProgress.active && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6366f1', fontSize: 11, fontWeight: 500 }}>
+                          <RefreshCw size={12} className="spin" />
+                          <span>Đang stream dữ liệu cột: {streamingProgress.current} / {streamingProgress.total}...</span>
+                        </div>
+                      )}
+                      
+                      {!streamingProgress.active && previewData.column_count > 50 && (
+                        <span style={{ color: '#10b981', fontSize: 11, fontWeight: 500 }}>
+                          ✓ Đã tải hoàn toàn {previewData.column_count} cột mượt mà!
+                        </span>
+                      )}
+                    </div>
+
+                    <div style={{ overflowX: 'auto', border: '1px solid #1e293b', borderRadius: 8, background: '#070a14' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, textAlign: 'left' }}>
+                        <thead style={{ background: '#0a0f1e', borderBottom: '1px solid #1e293b' }}>
+                          <tr>
                             {previewData.columns.map(c => (
-                              <td key={c.name} style={{ padding: '12px 16px', color: '#cbd5e1', fontFamily: 'monospace' }}>
-                                {row[c.name] !== undefined && row[c.name] !== null ? String(row[c.name]) : '—'}
-                              </td>
+                              <th key={c.name} style={{ padding: '12px 16px', fontWeight: 600, color: '#e2e8f0', borderBottom: '1px solid #1e293b', whiteSpace: 'nowrap' }}>
+                                <div>{c.name}</div>
+                                <div style={{ fontSize: 9, color: '#64748b', fontFamily: 'monospace', textTransform: 'uppercase', marginTop: 4 }}>{c.type}</div>
+                              </th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {previewData.rows.map((row, ri) => (
+                            <tr key={ri} style={{ borderBottom: '1px solid #1e293b', background: ri % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                              {previewData.columns.map(c => (
+                                <td key={c.name} style={{ padding: '12px 16px', color: '#cbd5e1', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                                  {row[c.name] !== undefined && row[c.name] !== null ? String(row[c.name]) : '—'}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -948,7 +1098,7 @@ export default function FeatureFactory() {
 
                       <div style={{ borderTop: '1px solid #1e293b', paddingTop: 12, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 10 }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Advanced Parameters Status</div>
-                        
+
                         {[
                           { label: 'Threshold Crossover (>50 & <50)', key: 'include_threshold' },
                           { label: 'Trend Direction Analysis', key: 'include_trend' },
@@ -1075,15 +1225,15 @@ export default function FeatureFactory() {
                             {/* Inner progress bar for active running step */}
                             {step.status === 'running' && selectedPipeline.progress && (
                               <div style={{ width: '100%', height: 4, background: '#1e293b', borderRadius: 2, overflow: 'hidden', marginTop: 8 }}>
-                                <div 
-                                  style={{ 
-                                    width: `${selectedPipeline.progress}%`, 
-                                    height: '100%', 
-                                    background: '#3b82f6', 
+                                <div
+                                  style={{
+                                    width: `${selectedPipeline.progress}%`,
+                                    height: '100%',
+                                    background: '#3b82f6',
                                     borderRadius: 2,
                                     transition: 'width 0.4s ease-out',
                                     boxShadow: '0 0 8px rgba(59,130,246,0.6)'
-                                  }} 
+                                  }}
                                 />
                               </div>
                             )}
@@ -1100,144 +1250,144 @@ export default function FeatureFactory() {
             {detailTab === 'monitor' && (
               <div>
                 {/* Dynamic Memory Streaming Area Chart */}
-                  {(() => {
-                    const history = ramHistories[selectedPipeline.id] || []
-                    const svgWidth = 500
-                    const svgHeight = 130
-                    const paddingLeft = 35
-                    const paddingRight = 10
-                    const paddingTop = 15
-                    const paddingBottom = 20
+                {(() => {
+                  const history = ramHistories[selectedPipeline.id] || []
+                  const svgWidth = 500
+                  const svgHeight = 130
+                  const paddingLeft = 35
+                  const paddingRight = 10
+                  const paddingTop = 15
+                  const paddingBottom = 20
 
-                    const usableWidth = svgWidth - paddingLeft - paddingRight
-                    const usableHeight = svgHeight - paddingTop - paddingBottom
+                  const usableWidth = svgWidth - paddingLeft - paddingRight
+                  const usableHeight = svgHeight - paddingTop - paddingBottom
 
-                    const rams = history.map(d => d.ram)
-                    const maxRam = Math.max(...rams, 250)
-                    const minRam = Math.max(0, Math.min(...rams) - 20)
+                  const rams = history.map(d => d.ram)
+                  const maxRam = Math.max(...rams, 250)
+                  const minRam = Math.max(0, Math.min(...rams) - 20)
 
-                    const points = history.map((pt, index) => {
-                      const x = paddingLeft + (index / (history.length - 1 || 1)) * usableWidth
-                      const y = paddingTop + usableHeight - ((pt.ram - minRam) / (maxRam - minRam || 1)) * usableHeight
-                      return { x, y, ...pt }
-                    })
+                  const points = history.map((pt, index) => {
+                    const x = paddingLeft + (index / (history.length - 1 || 1)) * usableWidth
+                    const y = paddingTop + usableHeight - ((pt.ram - minRam) / (maxRam - minRam || 1)) * usableHeight
+                    return { x, y, ...pt }
+                  })
 
-                    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-                    const areaPath = points.length > 0 
-                      ? `${linePath} L ${points[points.length - 1].x} ${paddingTop + usableHeight} L ${points[0].x} ${paddingTop + usableHeight} Z`
-                      : ''
+                  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+                  const areaPath = points.length > 0
+                    ? `${linePath} L ${points[points.length - 1].x} ${paddingTop + usableHeight} L ${points[0].x} ${paddingTop + usableHeight} Z`
+                    : ''
 
-                    return (
-                      <div style={{
-                        background: 'rgba(10,15,30,0.4)',
-                        border: '1px solid #1e293b',
-                        borderRadius: 12,
-                        padding: 16,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 12,
-                        marginTop: 20,
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <Activity size={14} color="#a78bfa" />
-                            <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>
-                              Celery Memory Monitor
-                            </span>
-                          </div>
-                          {selectedPipeline.status?.toLowerCase() === 'running' ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#10b981', fontWeight: 600 }}>
-                              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} className="blink"></span>
-                              LIVE STREAMING
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>
-                              RUN COMPLETE (IDLE)
-                            </span>
-                          )}
+                  return (
+                    <div style={{
+                      background: 'rgba(10,15,30,0.4)',
+                      border: '1px solid #1e293b',
+                      borderRadius: 12,
+                      padding: 16,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                      marginTop: 20,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Activity size={14} color="#a78bfa" />
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>
+                            Celery Memory Monitor
+                          </span>
                         </div>
-
-                        {history.length === 0 ? (
-                          <div style={{
-                            height: 110, display: 'flex', flexDirection: 'column', alignItems: 'center',
-                            justifyContent: 'center', gap: 8, color: '#475569', fontSize: 12,
-                            background: 'rgba(0,0,0,0.15)', borderRadius: 8, border: '1px dashed #334155'
-                          }}>
-                            <Clock size={18} className={selectedPipeline.status?.toLowerCase() === 'running' ? "spin" : ""} style={{ opacity: 0.5 }} />
-                            <span>
-                              {selectedPipeline.status?.toLowerCase() === 'running'
-                                ? 'Initializing memory stream monitoring...'
-                                : 'No memory logs available for this run.'}
-                            </span>
+                        {selectedPipeline.status?.toLowerCase() === 'running' ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#10b981', fontWeight: 600 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} className="blink"></span>
+                            LIVE STREAMING
                           </div>
                         ) : (
-                          <div style={{ position: 'relative' }}>
-                            <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
-                              <defs>
-                                <linearGradient id="ramAreaGrad" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.35" />
-                                  <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.0" />
-                                </linearGradient>
-                              </defs>
-
-                              {/* Horizontal Grid lines */}
-                              {[0, 0.5, 1].map((ratio, i) => {
-                                const y = paddingTop + ratio * usableHeight
-                                const val = Math.round(maxRam - ratio * (maxRam - minRam))
-                                return (
-                                  <g key={i}>
-                                    <line x1={paddingLeft} y1={y} x2={svgWidth - paddingRight} y2={y} stroke="#1e293b" strokeDasharray="3,3" />
-                                    <text x={paddingLeft - 8} y={y + 4} fill="#64748b" fontSize="9" textAnchor="end" fontFamily="monospace">
-                                      {val}M
-                                    </text>
-                                  </g>
-                                )
-                              })}
-
-                              {/* Filled Area */}
-                              <path d={areaPath} fill="url(#ramAreaGrad)" />
-
-                              {/* Stroke line */}
-                              <path d={linePath} fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" />
-
-                              {/* Breathing Cursor on the latest point */}
-                              {points.length > 0 && (
-                                <g>
-                                  <circle cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="6" fill="#8b5cf6" opacity="0.4">
-                                    <animate attributeName="r" values="4;10;4" dur="2s" repeatCount="indefinite" />
-                                    <animate attributeName="opacity" values="0.6;0.1;0.6" dur="2s" repeatCount="indefinite" />
-                                  </circle>
-                                  <circle cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="3.5" fill="#f8fafc" />
-                                </g>
-                              )}
-
-                              {/* X-axis Labels */}
-                              {points.length >= 2 && (
-                                <g>
-                                  <text x={points[0].x} y={svgHeight - 4} fill="#64748b" fontSize="9" textAnchor="start">
-                                    {points[0].time}
-                                  </text>
-                                  <text x={points[points.length - 1].x} y={svgHeight - 4} fill="#64748b" fontSize="9" textAnchor="end">
-                                    {points[points.length - 1].time}
-                                  </text>
-                                </g>
-                              )}
-                            </svg>
-
-                            {/* Float badge for current RAM value */}
-                            <div style={{
-                              position: 'absolute', top: 6, right: 6,
-                              background: 'rgba(15,23,42,0.75)', border: '1px solid #334155',
-                              borderRadius: 6, padding: '4px 8px', fontSize: 11, fontFamily: 'monospace',
-                              color: '#cbd5e1', fontWeight: 600
-                            }}>
-                              RAM Usage: <span style={{ color: '#a78bfa', fontWeight: 700 }}>{history[history.length - 1].ram} MB</span>
-                            </div>
-                          </div>
+                          <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>
+                            RUN COMPLETE (IDLE)
+                          </span>
                         )}
                       </div>
-                    )
-                  })()}
+
+                      {history.length === 0 ? (
+                        <div style={{
+                          height: 110, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                          justifyContent: 'center', gap: 8, color: '#475569', fontSize: 12,
+                          background: 'rgba(0,0,0,0.15)', borderRadius: 8, border: '1px dashed #334155'
+                        }}>
+                          <Clock size={18} className={selectedPipeline.status?.toLowerCase() === 'running' ? "spin" : ""} style={{ opacity: 0.5 }} />
+                          <span>
+                            {selectedPipeline.status?.toLowerCase() === 'running'
+                              ? 'Initializing memory stream monitoring...'
+                              : 'No memory logs available for this run.'}
+                          </span>
+                        </div>
+                      ) : (
+                        <div style={{ position: 'relative' }}>
+                          <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+                            <defs>
+                              <linearGradient id="ramAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.35" />
+                                <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.0" />
+                              </linearGradient>
+                            </defs>
+
+                            {/* Horizontal Grid lines */}
+                            {[0, 0.5, 1].map((ratio, i) => {
+                              const y = paddingTop + ratio * usableHeight
+                              const val = Math.round(maxRam - ratio * (maxRam - minRam))
+                              return (
+                                <g key={i}>
+                                  <line x1={paddingLeft} y1={y} x2={svgWidth - paddingRight} y2={y} stroke="#1e293b" strokeDasharray="3,3" />
+                                  <text x={paddingLeft - 8} y={y + 4} fill="#64748b" fontSize="9" textAnchor="end" fontFamily="monospace">
+                                    {val}M
+                                  </text>
+                                </g>
+                              )
+                            })}
+
+                            {/* Filled Area */}
+                            <path d={areaPath} fill="url(#ramAreaGrad)" />
+
+                            {/* Stroke line */}
+                            <path d={linePath} fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" />
+
+                            {/* Breathing Cursor on the latest point */}
+                            {points.length > 0 && (
+                              <g>
+                                <circle cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="6" fill="#8b5cf6" opacity="0.4">
+                                  <animate attributeName="r" values="4;10;4" dur="2s" repeatCount="indefinite" />
+                                  <animate attributeName="opacity" values="0.6;0.1;0.6" dur="2s" repeatCount="indefinite" />
+                                </circle>
+                                <circle cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="3.5" fill="#f8fafc" />
+                              </g>
+                            )}
+
+                            {/* X-axis Labels */}
+                            {points.length >= 2 && (
+                              <g>
+                                <text x={points[0].x} y={svgHeight - 4} fill="#64748b" fontSize="9" textAnchor="start">
+                                  {points[0].time}
+                                </text>
+                                <text x={points[points.length - 1].x} y={svgHeight - 4} fill="#64748b" fontSize="9" textAnchor="end">
+                                  {points[points.length - 1].time}
+                                </text>
+                              </g>
+                            )}
+                          </svg>
+
+                          {/* Float badge for current RAM value */}
+                          <div style={{
+                            position: 'absolute', top: 6, right: 6,
+                            background: 'rgba(15,23,42,0.75)', border: '1px solid #334155',
+                            borderRadius: 6, padding: '4px 8px', fontSize: 11, fontFamily: 'monospace',
+                            color: '#cbd5e1', fontWeight: 600
+                          }}>
+                            RAM Usage: <span style={{ color: '#a78bfa', fontWeight: 700 }}>{history[history.length - 1].ram} MB</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             )}
           </div>
@@ -1386,7 +1536,7 @@ export default function FeatureFactory() {
           >
             <RefreshCw size={18} className={isLoading ? "spin" : ""} />
           </button>
-          
+
           <button
             style={{ ...S.btn('secondary'), height: 44, padding: '0 24px', borderRadius: 12, background: 'rgba(99,102,241,0.1)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)', marginRight: 0 }}
             onClick={handleGenerateSample}
@@ -1394,7 +1544,7 @@ export default function FeatureFactory() {
           >
             <Zap size={18} /> Generate Samples
           </button>
-          
+
           <button
             style={{ ...S.btn('primary'), height: 44, padding: '0 24px', borderRadius: 12 }}
             onClick={() => setDrawerOpen(true)}
@@ -1663,7 +1813,7 @@ export default function FeatureFactory() {
                     {/* Advanced RSI Config */}
                     <div style={{ ...S.formGroup, background: 'rgba(255,255,255,0.01)', border: '1px dashed #1e293b', borderRadius: 8, padding: 14 }}>
                       <label style={{ ...S.label, marginBottom: 12, color: '#f1f5f9' }}>Advanced Analysis Options:</label>
-                      
+
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         {/* 1. Threshold Crossover */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1910,6 +2060,64 @@ export default function FeatureFactory() {
                       <span style={{ fontSize: 10, color: '#64748b', marginTop: 4, display: 'block' }}>
                         Separate lag steps using commas.
                       </span>
+                    </div>
+
+                    {/* Target Configuration */}
+                    <div style={{ ...S.formGroup, background: 'rgba(99,102,241,0.02)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 12, padding: 16, marginBottom: 20 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Sliders size={14} color="#818cf8" /> Auto-generate Target Column
+                          </div>
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>Construct look-ahead label automatically</div>
+                        </div>
+                        <div
+                          onClick={() => setAutoGenerateTarget(!autoGenerateTarget)}
+                          style={{
+                            width: 36, height: 20, borderRadius: 20,
+                            background: autoGenerateTarget ? '#6366f1' : '#334155',
+                            position: 'relative', cursor: 'pointer',
+                            transition: 'background 0.3s'
+                          }}
+                        >
+                          <div style={{
+                            width: 14, height: 14, borderRadius: '50%', background: '#fff',
+                            position: 'absolute', top: 3, left: autoGenerateTarget ? 19 : 3,
+                            transition: 'left 0.2s ease'
+                          }} />
+                        </div>
+                      </div>
+
+                      {autoGenerateTarget && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid #1e293b', paddingTop: 12 }}>
+                          <div>
+                            <label style={S.label}>Prediction Horizon (Candles)</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="100"
+                              style={S.input}
+                              value={predictionHorizon}
+                              onChange={e => setPredictionHorizon(Math.max(1, parseInt(e.target.value) || 1))}
+                            />
+                            <span style={{ fontSize: 9, color: '#64748b', marginTop: 4, display: 'block' }}>
+                              Number of candles ahead to predict. Last {predictionHorizon} rows will be cleaned to avoid leakage.
+                            </span>
+                          </div>
+
+                          <div>
+                            <label style={S.label}>Prediction Task Type</label>
+                            <select
+                              style={S.select}
+                              value={targetTaskType}
+                              onChange={e => setTargetTaskType(e.target.value)}
+                            >
+                              <option value="classification">Up / Down Binary Classification</option>
+                              <option value="regression">Regression (Raw Percent Returns)</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Live Estimator Panel */}
